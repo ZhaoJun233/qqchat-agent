@@ -95,6 +95,47 @@ public sealed class NeteaseMusicClient
         return new MusicInfo(songId, title.Length > 0 ? title : "（未知曲目）", artist, album, duration, lyric, tlyric, cover);
     }
 
+    /// <summary>
+    /// 按歌名搜歌（网易云搜索接口）：群里说“去听一下 XXX”时走这条路。
+    /// 返回能直接交给后续流程的 <see cref="MusicShare"/>（带歌曲 id 与歌名歌手）。
+    /// </summary>
+    public async Task<MusicShare?> SearchAsync(string keyword, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(keyword))
+        {
+            return null;
+        }
+
+        try
+        {
+            var path = "/api/search/get?s=" + Uri.EscapeDataString(keyword.Trim()) + "&type=1&limit=1&offset=0";
+            var json = await GetJsonAsync(path, ct);
+            var song = json is { } root && root.TryGetProperty("result", out var result) &&
+                        result.TryGetProperty("songs", out var songs) && songs.ValueKind == JsonValueKind.Array && songs.GetArrayLength() > 0
+                ? songs[0]
+                : (JsonElement?)null;
+
+            if (song is not { } s || !s.TryGetProperty("id", out var idNode))
+            {
+                _log($"[Music] 搜不到「{keyword}」");
+                return null;
+            }
+
+            var id = idNode.ValueKind == JsonValueKind.Number ? idNode.GetInt64().ToString() : idNode.GetString();
+            var title = s.TryGetProperty("name", out var n) ? n.GetString() : null;
+            var artist = s.TryGetProperty("artists", out var artists) && artists.ValueKind == JsonValueKind.Array
+                ? string.Join(" / ", artists.EnumerateArray().Select(a => a.TryGetProperty("name", out var an) ? an.GetString() : null).Where(x => !string.IsNullOrWhiteSpace(x)))
+                : null;
+
+            return string.IsNullOrWhiteSpace(id) ? null : new MusicShare("netease", id, title, artist, SourceLabel: "搜索");
+        }
+        catch (Exception ex)
+        {
+            _log($"[Music] 搜索「{keyword}」失败: {ex.Message}");
+            return null;
+        }
+    }
+
     /// <summary>跟进短链跳转，拿到最终地址（网易云分享短链 163cn.tv / 手机分享链）。</summary>
     public async Task<string?> ResolveRedirectAsync(string url, CancellationToken ct)
     {

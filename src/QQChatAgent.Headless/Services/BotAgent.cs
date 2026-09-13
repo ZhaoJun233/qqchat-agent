@@ -6,6 +6,7 @@ using System.Text;
 
 using QQChatAgent.Services.Stickers;
 using QQChatAgent.Services.Music;
+using QQChatAgent.Services.Links;
 
 namespace QQChatAgent.Services;
 
@@ -283,6 +284,7 @@ public sealed class BotAgent : IDisposable
             () => Math.Clamp(_settings.MusicMaxDownloadMb, 1, 64) * 1024 * 1024,
             EmitLog);
         _music = new MusicService(store, netease, audio, () => _settings, Path.Combine(dataDir, "audio"), EmitLog);
+        _links = new LinkPreviewer(_musicHttp, () => _settings, EmitLog);
     }
 
     /// <summary>
@@ -948,6 +950,38 @@ public sealed class BotAgent : IDisposable
             _ = Task.Run(() => HandleMusicAsync(conversation, msg.SenderName, musicShares.ToList()));
         }
 
+        // 链接：群里发的 URL（包括分享卡片里那个）真去打开看一眼，取回标题/摘要。
+        // 有音乐分享时跳过 —— 音乐那条路自己会处理链接，不必看两遍。
+        var linkUrls = musicShares is { Count: > 0 } || _links is null || !_settings.EnableLinkPreview
+            ? []
+            : LinkExtractor.Extract(msg.Text, Math.Clamp(_settings.LinkPreviewMax, 0, 5));
+        if (linkUrls.Count > 0)
+        {
+            var key = conversation.SourceKey;
+            var urls = linkUrls.ToList();
+            var pending = Task.Run(async () =>
+            {
+                try
+                {
+                    var note = await _links!.DescribeAsync(urls, CancellationToken.None);
+                    if (!string.IsNullOrWhiteSpace(note))
+                    {
+                        _linkNotes[key] = note!;
+                        EmitLog($"[Link] 已看过 {urls.Count} 个链接：{string.Join("、", urls.Select(u => u.Length > 48 ? u[..48] + "…" : u))}");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    EmitLog($"[Link] 预览失败: {ex.Message}");
+                }
+                finally
+                {
+                    _linkTasks.TryRemove(key, out _);
+                }
+            });
+            _linkTasks[key] = pending;
+        }
+
         // 首个群消息时补历史上下文（同桌面版"点开会话拉历史"）
         if (msg.IsGroup)
         {
@@ -1099,11 +1133,23 @@ public sealed class BotAgent : IDisposable
     /// <summary>机器人当前心情：被戳次数（客观）+ 模型自己写的一句心情（主观）。</summary>
     private readonly MoodStore _mood = new();
 
+    /// <summary>每个会话最近一次“按歌名去听”的时间（冷却，防同一话题反复搜歌）。</summary>
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, DateTimeOffset> _lastListen = new();
+
+    /// <summary>每个会话正在跑的链接预览（回复前短暂等一下：快站点能当轮就用上）。</summary>
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, Task> _linkTasks = new();
+
     /// <summary>听音乐专用的 HttpClient（下载音频可能几 MB，超时给宽松点）。</summary>
     private readonly HttpClient _musicHttp = new() { Timeout = TimeSpan.FromSeconds(45) };
 
     /// <summary>听音乐：识别到的分享 → 网易云歌词 + 低码率音频 → 波形分析。Start() 里组装。</summary>
     private MusicService? _music;
+
+    /// <summary>链接预览：群里发链接时真去打开一下，取标题/摘要。Start() 里组装。</summary>
+    private LinkPreviewer? _links;
+
+    /// <summary>每个会话最近一次“链接里写了啥”的描述，交给下一轮回复用（用掉就清）。</summary>
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, string> _linkNotes = new();
 
     /// <summary>每个会话最近一次“听过的歌”的事实描述，交给下一轮回复用（用掉就清）。</summary>
     private readonly System.Collections.Concurrent.ConcurrentDictionary<string, string> _musicNotes = new();
@@ -1800,6 +1846,14 @@ public sealed class BotAgent : IDisposable
         // 刚“听过”的歌：把歌词与波形实测交给模型，用完就清（避免以后每轮都背上它）
         var musicText = _musicNotes.TryRemove(conversation.SourceKey, out var pendingMusic) ? pendingMusic : null;
 
+        // 链接预览：给快站点 2.5 秒的机会当轮用上；太慢就先不等（完成后留给下一轮）
+        if (_linkTasks.TryGetValue(conversation.SourceKey, out var linkTask))
+        {
+            await Task.WhenAny(linkTask, Task.Delay(TimeSpan.FromMilliseconds(2500)));
+        }
+
+        var linkText = _linkNotes.TryRemove(conversation.SourceKey, out var pendingLink) ? pendingLink : null;
+
         CompletionResult result;
         try
         {
@@ -1809,7 +1863,9 @@ public sealed class BotAgent : IDisposable
                 stickers: stickerChoices.Count > 0 ? stickerChoices : null,
                 pokeContext: pokeContext,
                 moodText: moodText,
-                musicText: musicText);
+                musicText: musicText,
+                linkText: linkText,
+                enableListen: _settings.EnableMusic);
         }
         catch (Exception ex)
         {
@@ -1833,6 +1889,46 @@ public sealed class BotAgent : IDisposable
         // 表情包：模型可以只发图不说话，也可以“文字 + 图”。
         // 校验一下 id（模型偶发会编造/多空格），拿不到就把这次当成纯文字。
         StickerRecord? sticker = null;
+        // 模型想听一首歌（listen 字段）：后台去搜、去听，听完再给它一次开口的机会。
+        // 这是群里说“去听一下 XXX”的唯一入口 —— 不靠正则猜句子，交给模型自己决定。
+        if (_settings.EnableMusic && result.Listen is { Length: > 0 } wantedSong && _music is not null)
+        {
+            var key = conversation.SourceKey;
+            var nowListen = DateTimeOffset.Now;
+            var cooldown = TimeSpan.FromSeconds(Math.Max(0, _settings.MusicListenCooldownSeconds));
+            if (!_lastListen.TryGetValue(key, out var lastAt) || nowListen - lastAt >= cooldown)
+            {
+                _lastListen[key] = nowListen;
+                EmitLog($"[Music] 模型想听「{wantedSong}」");
+                _ = Task.Run(async () =>
+                {
+                    try
+                    {
+                        var note = await _music.DescribeByNameAsync(wantedSong, "群友", CancellationToken.None);
+                        if (string.IsNullOrWhiteSpace(note))
+                        {
+                            EmitLog($"[Music] 没搜到/没听到「{wantedSong}」");
+                            return;
+                        }
+
+                        _musicNotes.AddOrUpdate(key, note!, (_, old) => old + "\n\n" + note);
+                        if (_settings.AiModeEnabled && AllowReply(conversation))
+                        {
+                            EnqueueReply(conversation, null);
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        EmitLog($"[Music] 听「{wantedSong}」失败: {ex.Message}");
+                    }
+                });
+            }
+            else
+            {
+                EmitLog($"[Music] 「{wantedSong}」还在冷却中（{Math.Round((nowListen - lastAt).TotalSeconds)}s 前刚听过）");
+            }
+        }
+
         if (_settings.EnableStickers && result.StickerId is { } sid)
         {
             sticker = _stickers.Find(sid);

@@ -854,8 +854,12 @@
     $("setMusicAnalysisSeconds").value = r.musicMaxAnalysisSeconds;
     $("setMusicLibraryMax").value = r.musicLibraryMax;
     $("setMusicNoteTtlDays").value = r.musicNoteTtlDays;
+    $("setMusicListenCooldown").value = r.musicListenCooldownSeconds;
     $("setMusicKeepAudio").checked = r.musicKeepAudio === true;
     $("musicHint").textContent = "网易云 Cookie：" + (r.neteaseCookieSet ? "已设置（环境变量）" : "未设置（可选）");
+    $("setEnableLinkPreview").checked = r.enableLinkPreview !== false;
+    $("setLinkPreviewTimeout").value = r.linkPreviewTimeoutSeconds;
+    $("setLinkPreviewMax").value = r.linkPreviewMax;
 
     // NapCat 状态条（对应桌面版 InfoBar）
     const d = connDisplay();
@@ -925,7 +929,11 @@
       musicMaxAnalysisSeconds: Number($("setMusicAnalysisSeconds").value),
       musicLibraryMax: Number($("setMusicLibraryMax").value),
       musicNoteTtlDays: Number($("setMusicNoteTtlDays").value),
-      musicKeepAudio: $("setMusicKeepAudio").checked
+      musicListenCooldownSeconds: Number($("setMusicListenCooldown").value),
+      musicKeepAudio: $("setMusicKeepAudio").checked,
+      enableLinkPreview: $("setEnableLinkPreview").checked,
+      linkPreviewTimeoutSeconds: Number($("setLinkPreviewTimeout").value),
+      linkPreviewMax: Number($("setLinkPreviewMax").value)
     };
 
     // 密钥单独处理：输入框留空 = 不改（否则每次保存都会把已存的密钥抹掉）；

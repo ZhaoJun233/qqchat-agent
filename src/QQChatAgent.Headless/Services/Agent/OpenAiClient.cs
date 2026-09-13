@@ -46,7 +46,7 @@ public sealed class OpenAiClient
     /// 网络/接口异常向上抛，由调用方记日志。
     /// </summary>
     public async Task<CompletionResult> CompleteAsync(IReadOnlyList<ChatMessage> context, string? profilesText = null, CancellationToken ct = default,
-        IReadOnlyList<StickerChoice>? stickers = null, bool pokeContext = false, string? moodText = null, string? musicText = null)
+        IReadOnlyList<StickerChoice>? stickers = null, bool pokeContext = false, string? moodText = null, string? musicText = null, string? linkText = null, bool enableListen = false)
     {
         if (string.IsNullOrWhiteSpace(_settings.ApiKey))
         {
@@ -120,6 +120,25 @@ public sealed class OpenAiClient
                 "\n（这是你刚“听”过的一首歌：可以就节奏/旋律/歌词/年代感聊两句，或顺着群友的话接。" +
                 "歌名、歌手、时长、BPM、响度、段落这些事实一律以上面的实测数据为准，不要另编；" +
                 "歌词里没有的内容不要虚构，也别把整段歌词抰出来 —— 引用一两句点到即止，像真的听过那样随口提。）";
+        }
+
+        // 群里消息里的链接：机器人已经打开看过（标题/摘要），别让它对着一串 URL 猜
+        if (!string.IsNullOrWhiteSpace(linkText))
+        {
+            systemContent +=
+                "\n\n[群里刚发的链接]\n" + linkText.Trim() +
+                "\n（链接内容已取回，按上面的标题/摘要聊就行；别编造页面里没有的细节，也别把整段摘要复述一遍。）";
+        }
+
+        // 想听一首歌：模型可以主动要求“让我听听这首歌”（群里让它听歌就是走这条路）
+        if (enableListen)
+        {
+            systemContent +=
+                "\n\n[想听一首歌]\n" +
+                "群里让你听/放某首歌，或者你想就某首歌接话但没把握时，在 JSON 里加 listen 字段写上歌名（带歌手更好）：" +
+                "{\"suitability\": 85, \"reply\": \"我去听听\", \"listen\": \"洛天依 if love == true\"}。\n" +
+                "机器人会去网易云搜这首歌、下一份低码率音频做波形分析，然后把歌词和实测数据给你 —— 下一轮你就能真的聊这首歌了。\n" +
+                "listen 只在确实需要“听过”时用（同一首歌不要反复请求），也别拿它当通用搜索框。";
         }
 
         // 被戳过才给的指令：戳回去是**可选**动作，看当下心情 —— 不必每次被戳都戳一次
@@ -263,6 +282,23 @@ public sealed class OpenAiClient
 
         var text = StripCodeFence(rawReply.Trim());
 
+        // 模型很爱在 JSON 前面写一句解释（“好的，我来回：”）或者把 JSON 裹在围栏里再另起一段 ——
+        // 以前这种“不以 { 开头”的输出会直接走纯文本分支，把整段 JSON 发进群里。
+        // 这里先在全文里找“长得像我们约定的那个 JSON”的片段。
+        if (!text.StartsWith('{') && TryExtractJsonBlock(text, out var extracted))
+        {
+            text = extracted;
+        }
+
+        // 再兜一层：纯文本里带着我们的字段名（suitability/reply/sticker…）说明它本来就是想输出 JSON，
+        // 只是格式没弄对 —— 宁可沉默，也绝不把 JSON 代码吐进群里。
+        if (!text.StartsWith('{') && LooksLikeSchemaJson(text))
+        {
+            Services.FileLog.Warn("Agent",
+                $"模型输出看似 JSON 但格式不对，按沉默处理（避免把代码发进群）：{Truncate(rawReply, 120)}");
+            return new CompletionResult(null, null, rawReply);
+        }
+
         // 只有“以 { 开头”才当作 JSON 尝试。
         // 理由：真人语气里也会出现花括号（“这个 {a:1} 是啥”），那些必须当普通文本发出去。
         if (!text.StartsWith('{'))
@@ -382,6 +418,18 @@ public sealed class OpenAiClient
                 }
             }
 
+            // 模型想“听一听”某首歌（歌名/歌手）：群里让它听歌、或它自己想聊某首歌却没把握时用。
+            // 机器人会拿这个名字去搜歌，搜到就下低码率音频分析波形，下一轮把歌词 + 实测给它。
+            string? listen = null;
+            if ((root.TryGetProperty("listen", out var ls) || root.TryGetProperty("听歌", out ls)) && ls.ValueKind == JsonValueKind.String)
+            {
+                var wanted = ls.GetString()?.Trim();
+                if (!string.IsNullOrWhiteSpace(wanted) && wanted.Length is >= 2 and <= 60)
+                {
+                    listen = wanted;
+                }
+            }
+
             // 模型顺手写的心情（≤ 24 字）：存起来给下一轮用；太长/非字符串一律忽略
             string? mood = null;
             if (root.TryGetProperty("mood", out var md) && md.ValueKind == JsonValueKind.String)
@@ -389,7 +437,7 @@ public sealed class OpenAiClient
                 mood = md.GetString()?.Trim();
             }
 
-            return new CompletionResult(suitability, string.IsNullOrWhiteSpace(reply) ? null : reply, rawReply, stickerId, replyToId, pokeTargetId, mood);
+            return new CompletionResult(suitability, string.IsNullOrWhiteSpace(reply) ? null : reply, rawReply, stickerId, replyToId, pokeTargetId, mood, listen);
         }
         catch (JsonException)
         {
@@ -398,6 +446,85 @@ public sealed class OpenAiClient
             return new CompletionResult(null, null, rawReply);
         }
     }
+
+    /// <summary>
+    /// 从一段文本里抠出第一个“像我们约定的” JSON 对象（带花括号配对、跳过字符串里的括号）。
+    /// 判据是里面出现了我们的字段名 —— 免得把群友消息里引用的一小段 JSON 当成模型输出。
+    /// </summary>
+    private static bool TryExtractJsonBlock(string text, out string block)
+    {
+        block = string.Empty;
+        for (var i = 0; i < text.Length; i++)
+        {
+            if (text[i] != '{')
+            {
+                continue;
+            }
+
+            var depth = 0;
+            var inString = false;
+            var escaped = false;
+            for (var j = i; j < text.Length; j++)
+            {
+                var c = text[j];
+                if (escaped)
+                {
+                    escaped = false;
+                    continue;
+                }
+
+                if (c == '\\' && inString)
+                {
+                    escaped = true;
+                    continue;
+                }
+
+                if (c == '"')
+                {
+                    inString = !inString;
+                    continue;
+                }
+
+                if (inString)
+                {
+                    continue;
+                }
+
+                switch (c)
+                {
+                    case '{':
+                        depth++;
+                        break;
+                    case '}':
+                        depth--;
+                        if (depth == 0)
+                        {
+                            var candidate = text[i..(j + 1)];
+                            if (LooksLikeSchemaJson(candidate))
+                            {
+                                block = candidate;
+                                return true;
+                            }
+
+                            j = text.Length; // 这个块不是，继续找下一个 {
+                        }
+
+                        break;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>这段文本里有没有我们的约定字段（说明它想输出的是结构化回复）。</summary>
+    private static bool LooksLikeSchemaJson(string text)
+        => text.Contains("\"suitability\"", StringComparison.OrdinalIgnoreCase)
+        || text.Contains("\"reply\"", StringComparison.OrdinalIgnoreCase)
+        || text.Contains("\"sticker\"", StringComparison.OrdinalIgnoreCase)
+        || text.Contains("\"replyTo\"", StringComparison.OrdinalIgnoreCase)
+        || text.Contains("\"mood\"", StringComparison.OrdinalIgnoreCase)
+        || text.Contains("\"poke\"", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
     /// 可见字符数：忽略空白、零宽空格、BOM。用于判断输出是不是被上游截断的碎片。
@@ -911,7 +1038,8 @@ public readonly record struct StickerChoice(string Id, string Description);
 /// <param name="ReplyToMessageId">模型自己指认的“我在回哪条消息”（对应提示里的 (#id)）；null = 没指定。</param>
 /// <param name="PokeTargetId">模型想戳的人的 QQ 号（对应提示里的 poke 字段）；null = 不戳。</param>
 /// <param name="Mood">模型顺手写的“我现在的心情”（≤ 24 字）；null = 没写。</param>
-public readonly record struct CompletionResult(int? Suitability, string? Reply, string? RawText, string? StickerId = null, long? ReplyToMessageId = null, long? PokeTargetId = null, string? Mood = null);
+/// <param name="Listen">模型想“听一听”的歌名/歌手（机器人会去搜索并分析波形）；null = 不想听。</param>
+public readonly record struct CompletionResult(int? Suitability, string? Reply, string? RawText, string? StickerId = null, long? ReplyToMessageId = null, long? PokeTargetId = null, string? Mood = null, string? Listen = null);
 
 /// <summary>图片下载器：把图片 URL 下载并转成 base64 data URL（供多模态模型识图），
 /// 也给表情包库提供原始字节。</summary>

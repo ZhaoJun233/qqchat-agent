@@ -457,7 +457,26 @@ public sealed class OneBotGateway : IQqChatSource, IDisposable
         {
             if (postType == "message")
             {
-                HandleMessageEvent(root);
+                // 消息处理要发动作（取合并转发的聊天记录），必须异步 ——
+                // 在接收线程上同步阻塞会死锁：动作响应要回到同一条接收泵才能读到。
+                // 但**顺序必须保住**（会话序号、上下文顺序都依赖于它）→ 串行闸门：
+                // 每次只处理一条，后面的排队等 —— 既不死锁，也不乱序。
+                _ = Task.Run(async () =>
+                {
+                    await _messageGate.WaitAsync();
+                    try
+                    {
+                        await HandleMessageEventCoreAsync(root);
+                    }
+                    catch (Exception ex)
+                    {
+                        Log("处理消息事件出错: " + ex.Message);
+                    }
+                    finally
+                    {
+                        _messageGate.Release();
+                    }
+                });
             }
             else if (postType == "notice")
             {
@@ -547,7 +566,22 @@ public sealed class OneBotGateway : IQqChatSource, IDisposable
             DateTimeOffset.FromUnixTimeSeconds(time)));
     }
 
-    private void HandleMessageEvent(JsonNode root)
+    private async Task HandleMessageEventAsync(JsonNode root)
+    {
+        try
+        {
+            await HandleMessageEventCoreAsync(root);
+        }
+        catch (Exception ex)
+        {
+            Log("处理消息事件出错: " + ex.Message);
+        }
+    }
+
+    /// <summary>消息串行闸门：保证多条消息按到达顺序处理（异步取转发记录之后也不能乱序）。</summary>
+    private readonly SemaphoreSlim _messageGate = new(1, 1);
+
+    private async Task HandleMessageEventCoreAsync(JsonNode root)
     {
         var messageType = root["message_type"]?.GetValue<string>();
         if (messageType is not "private" and not "group")
@@ -578,7 +612,11 @@ public sealed class OneBotGateway : IQqChatSource, IDisposable
             : null;
 
         var raw = root["raw_message"]?.GetValue<string>();
-        var (text, mentioned, imageUrls, musicShares) = ParseMessage(root["message"] as JsonArray, raw, selfId);
+
+        // 合并转发：内容不在消息里，要另发一个 get_forward_msg 去取（可能好几条，先全部取回来）
+        var forwards = await FetchForwardRecordsAsync(root["message"] as JsonArray, CancellationToken.None);
+
+        var (text, mentioned, imageUrls, musicShares) = ParseMessage(root["message"] as JsonArray, raw, selfId, forwards);
 
         var senderName = sender is null
             ? (isGroup ? $"成员 {userId}" : userId.ToString())
@@ -604,8 +642,52 @@ public sealed class OneBotGateway : IQqChatSource, IDisposable
             musicShares.Count > 0 ? musicShares : null));
     }
 
+    /// <summary>
+    /// 取合并转发的内容：把消息里所有 forward 段逐个发 get_forward_msg。
+    /// 失败就当没有（渲染成“[合并转发]”—— 整条消息不能被一条取不回来的转发拖死）。
+    /// </summary>
+    private async Task<Dictionary<string, JsonNode?>> FetchForwardRecordsAsync(JsonArray? segments, CancellationToken ct)
+    {
+        var records = new Dictionary<string, JsonNode?>();
+        if (segments is null)
+        {
+            return records;
+        }
+
+        foreach (var seg in segments)
+        {
+            if (seg?["type"]?.GetValue<string>() != "forward")
+            {
+                continue;
+            }
+
+            var id = seg["data"]?["id"]?.GetValue<string>();
+            if (string.IsNullOrWhiteSpace(id) || records.ContainsKey(id))
+            {
+                continue;
+            }
+
+            try
+            {
+                var result = await SendActionAsync("get_forward_msg", $"{{\"id\":\"{id}\"}}", ct);
+                // 注意：SendActionAsync 返回的是整个响应（status/retcode/data），内容在 data 里
+                var count = (result?["data"]?["messages"] as JsonArray)?.Count ?? 0;
+                records[id] = result?["data"];
+                Log($"转发聊天记录 id={id} → {count} 条");
+            }
+            catch (Exception ex)
+            {
+                Log($"取转发聊天记录失败（id={id}）: {ex.Message}");
+                records[id] = null;
+            }
+        }
+
+        return records;
+    }
+
     /// <summary>解析消息成纯文本；数组段（text/at/image…）或 raw_message（CQ 码）均支持。</summary>
-    private static (string Text, bool Mentioned, List<string> ImageUrls, List<MusicShare> MusicShares) ParseMessage(JsonArray? segments, string? rawMessage, long selfId)
+    private static (string Text, bool Mentioned, List<string> ImageUrls, List<MusicShare> MusicShares) ParseMessage(
+        JsonArray? segments, string? rawMessage, long selfId, Dictionary<string, JsonNode?>? forwards = null)
     {
         var sb = new System.Text.StringBuilder();
         var mentioned = false;
@@ -682,16 +764,47 @@ public sealed class OneBotGateway : IQqChatSource, IDisposable
                     case "json":
                         // 音乐分享：OneBot 的 music 段（带平台+id）或 QQ 客户端的新版 json 卡片。
                         // 这两种段以前直接被丢掉，机器人只见一个空消息 —— 现在把歌认出来。
+                        // 不是音乐的其他分享卡片（新闻/小程序/链接）走下面的“分享卡片”分支。
                         if (MusicShareParser.TryParseSegment(seg) is { } share)
                         {
-                            musicShares.Add(share);
-                            sb.Append("[音乐分享:").Append(share.Title ?? share.SongId ?? share.Platform).Append(']');
+                            if (IsMusicShare(share))
+                            {
+                                musicShares.Add(share);
+                                sb.Append("[音乐分享:").Append(share.Title ?? share.SongId ?? share.Platform).Append(']');
+                            }
+                            else
+                            {
+                                sb.Append("[分享卡片:").Append(share.Title ?? "未命名");
+                                if (!string.IsNullOrWhiteSpace(share.Artist))
+                                {
+                                    sb.Append(' ').Append(share.Artist);
+                                }
+
+                                sb.Append(']');
+                                if (!string.IsNullOrWhiteSpace(share.PageUrl))
+                                {
+                                    sb.Append(' ').Append(share.PageUrl);
+                                }
+                            }
                         }
 
                         break;
-                    case "reply":
-                    case "forward":
+
                     case "file":
+                        var fileName = data?["name"]?.GetValue<string>() ?? data?["file"]?.GetValue<string>();
+                        sb.Append("[文件:").Append(string.IsNullOrWhiteSpace(fileName) ? "未命名" : fileName).Append(']');
+                        break;
+
+                    case "forward":
+                        // 合并转发的聊天记录：内容在 get_forward_msg 里，展开成正文
+                        var forwardId = data?["id"]?.GetValue<string>();
+                        var record = forwardId is not null && forwards is not null && forwards.TryGetValue(forwardId, out var node)
+                            ? ForwardRecord.Render(node, 20, 1200)
+                            : null;
+                        sb.Append(' ').Append(record ?? "[合并转发的聊天记录，内容未能取回]");
+                        break;
+
+                    case "reply":
                         break;
                     default:
                         break;
@@ -710,7 +823,7 @@ public sealed class OneBotGateway : IQqChatSource, IDisposable
 
         if (rawMessage is not null)
         {
-            var text = StripCqCode(rawMessage, selfId, out mentioned);
+            var text = StripCqCode(rawMessage, selfId, out mentioned, forwards);
             var sharesFromRaw = new List<MusicShare>();
             if (MusicShareParser.TryParseText(rawMessage) is { } fromRaw)
             {
@@ -723,8 +836,13 @@ public sealed class OneBotGateway : IQqChatSource, IDisposable
         return (string.Empty, false, imageUrls, musicShares);
     }
 
+    /// <summary>这张卡片是“歌”还是普通分享链接（决定走听音乐还是走链接预览）。</summary>
+    private static bool IsMusicShare(MusicShare share)
+        => share.SongId is not null || share.DirectAudioUrl is not null ||
+           share.Platform is "netease" or "qq" or "kugou" or "kuwo" or "migu";
+
     /// <summary>把 CQ 码文本转成可读文本：[CQ:at,qq=123] 保留 @ 目标，图片/表情等替换为占位。</summary>
-    private static string StripCqCode(string raw, long selfId, out bool mentioned)
+    private static string StripCqCode(string raw, long selfId, out bool mentioned, Dictionary<string, JsonNode?>? forwards = null)
     {
         mentioned = false;
         var result = new System.Text.StringBuilder();
@@ -786,6 +904,23 @@ public sealed class OneBotGateway : IQqChatSource, IDisposable
                         break;
                     case "video":
                         result.Append("[视频]");
+                        break;
+                    case "file":
+                        result.Append("[文件:").Append(FirstNonEmpty(GetArg(args, "name"), GetArg(args, "file"), "未命名")).Append(']');
+                        break;
+                    case "music":
+                        result.Append("[音乐分享]");
+                        break;
+                    case "forward":
+                        // CQ 码形式的合并转发：id 取出来就能查内容
+                        var cqForwardId = GetArg(args, "id");
+                        var cqRecord = cqForwardId.Length > 0 && forwards is not null && forwards.TryGetValue(cqForwardId, out var cqNode)
+                            ? ForwardRecord.Render(cqNode, 20, 1200)
+                            : null;
+                        result.Append(' ').Append(cqRecord ?? "[合并转发的聊天记录，内容未能取回]");
+                        break;
+                    case "json":
+                        result.Append("[分享卡片]");
                         break;
                 }
 

@@ -87,6 +87,7 @@ public static partial class Program
             await Scenario("s20", RunPokeScenarioAsync);
             await Scenario("s21", RunModelConfigScenarioAsync);
         await Scenario("s22", RunMusicScenarioAsync);
+        await Scenario("s23", RunLinksScenarioAsync);
         }
         catch (Exception ex)
         {
@@ -821,6 +822,13 @@ public static partial class Program
         openAi.EnqueueReply("""{"suitability": 95, "reply": "悼"}""");
         // 11) 单字正常应答（“嗯”）：中文口语里就是这么用的，必须放行
         openAi.EnqueueReply("""{"suitability": 95, "reply": "嗯"}""");
+        // 12) ★ 线上实测（2026-09-13）：JSON 前面先写一句解释 ——
+        //     以前这种“不以 { 开头”的输出会走纯文本分支，把整段 JSON 连代码块一起发进群里
+        openAi.EnqueueReply("好的，我来回：\n{\"suitability\": 90, \"reply\": \"前面带解释也要能解析\"}");
+        // 13) ★ 围栏前后还有别的文字
+        openAi.EnqueueReply("我来回一下：\n```json\n{\"suitability\": 90, \"reply\": \"围栏前后有文字也要能解析\"}\n```\n就这样。");
+        // 14) ★ 想输出 JSON 但括号/引号坏了 → 宁可沉默，也绝不把代码发进群
+        openAi.EnqueueReply("{\"suitability\": 90, \"reply\": \"这段不能发出去\"");
 
         using var cts = new CancellationTokenSource(TimeSpan.FromMinutes(3));
         using var bot = StartBot(new Dictionary<string, string>
@@ -845,7 +853,7 @@ public static partial class Program
         await protocol.ConnectReverseAsync($"ws://127.0.0.1:{botWsPort}", cts.Token);
         await protocol.WaitForActionAsync("get_login_info", TimeSpan.FromSeconds(10));
 
-        for (var i = 0; i < 11; i++)
+        for (var i = 0; i < 14; i++)
         {
             await protocol.SendGroupMessageAsync(groupId, 30003, "小明", $"第{i}个测试输入", 9100 + i, mentionBot: true, ct: cts.Token);
             await Task.Delay(700);
@@ -891,7 +899,16 @@ public static partial class Program
         Check("★ 紧接上一句一字不差 → 复读守卫拦下（只发一次）",
             sends.Count(s => s.Trim() == "好的，我看看") == 1, string.Join(" | ", sends));
 
-        Check("共只发出 6 条", sends.Count == 6, $"实际 {sends.Count} 条：{string.Join(" | ", sends)}");
+        Check("★ JSON 前面带一句解释也当 JSON 解析（线上吐代码的那个场景）",
+            sends.Contains("前面带解释也要能解析"), string.Join(" | ", sends));
+
+        Check("★ 围栏前后还有别的文字也能解析出正文",
+            sends.Contains("围栏前后有文字也要能解析"), string.Join(" | ", sends));
+
+        Check("★ 格式坏掉的 JSON 一律沉默，绝不把代码发进群",
+            !sends.Any(s => s.Contains("这段不能发出去")) && !sends.Any(s => s.Contains("```")), string.Join(" | ", sends));
+
+        Check("共只发出 8 条", sends.Count == 8, $"实际 {sends.Count} 条：{string.Join(" | ", sends)}");
 
         await bot.StopAsync();
     }

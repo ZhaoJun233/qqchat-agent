@@ -515,13 +515,17 @@ public sealed class WebUiServer : IDisposable
             if (body["profileSummaryIntervalSeconds"] is JsonNode psi) s.ProfileSummaryIntervalSeconds = Math.Clamp(psi.GetValue<int>(), 0, 86400);
 
             // ---- 表情包 ----
-            if (body["enableMusic"] is JsonNode em) s.EnableMusic = em.GetValue<bool>();
+            if (body["enableLinkPreview"] is JsonNode elp) s.EnableLinkPreview = elp.GetValue<bool>();
+        if (body["linkPreviewTimeoutSeconds"] is JsonNode lpt) s.LinkPreviewTimeoutSeconds = Math.Clamp(lpt.GetValue<int>(), 2, 30);
+        if (body["linkPreviewMax"] is JsonNode lpm) s.LinkPreviewMax = Math.Clamp(lpm.GetValue<int>(), 0, 5);
+        if (body["enableMusic"] is JsonNode em) s.EnableMusic = em.GetValue<bool>();
         if (body["musicSources"] is JsonNode ms) s.MusicSources = ms.GetValue<string>();
         if (body["musicBitrate"] is JsonNode mb) s.MusicBitrate = Math.Clamp(mb.GetValue<int>(), 32, 320);
         if (body["musicMaxDownloadMb"] is JsonNode mmd) s.MusicMaxDownloadMb = Math.Clamp(mmd.GetValue<int>(), 1, 64);
         if (body["musicMaxAnalysisSeconds"] is JsonNode mma) s.MusicMaxAnalysisSeconds = Math.Clamp(mma.GetValue<int>(), 20, 600);
         if (body["musicLibraryMax"] is JsonNode mml) s.MusicLibraryMax = Math.Clamp(mml.GetValue<int>(), 10, 5000);
         if (body["musicNoteTtlDays"] is JsonNode mnt) s.MusicNoteTtlDays = Math.Clamp(mnt.GetValue<int>(), 1, 365);
+        if (body["musicListenCooldownSeconds"] is JsonNode mlc) s.MusicListenCooldownSeconds = Math.Clamp(mlc.GetValue<int>(), 0, 86400);
         if (body["musicKeepAudio"] is JsonNode mka) s.MusicKeepAudio = mka.GetValue<bool>();
         if (body["enableStickers"] is JsonNode es) s.EnableStickers = es.GetValue<bool>();
             if (body["stickerLibraryMax"] is JsonNode slm) s.StickerLibraryMax = Math.Clamp(slm.GetValue<int>(), 0, 2000);
@@ -876,13 +880,17 @@ public sealed class WebUiServer : IDisposable
                 ["profileSummaryThreshold"] = s.ProfileSummaryThreshold,
                 ["profileSummaryMaxChars"] = s.ProfileSummaryMaxChars,
                 ["profileSummaryIntervalSeconds"] = s.ProfileSummaryIntervalSeconds,
-                ["enableMusic"] = s.EnableMusic,
+                ["enableLinkPreview"] = s.EnableLinkPreview,
+        ["linkPreviewTimeoutSeconds"] = s.LinkPreviewTimeoutSeconds,
+        ["linkPreviewMax"] = s.LinkPreviewMax,
+        ["enableMusic"] = s.EnableMusic,
         ["musicSources"] = s.MusicSources,
         ["musicBitrate"] = s.MusicBitrate,
         ["musicMaxDownloadMb"] = s.MusicMaxDownloadMb,
         ["musicMaxAnalysisSeconds"] = s.MusicMaxAnalysisSeconds,
         ["musicLibraryMax"] = s.MusicLibraryMax,
         ["musicNoteTtlDays"] = s.MusicNoteTtlDays,
+        ["musicListenCooldownSeconds"] = s.MusicListenCooldownSeconds,
         ["musicKeepAudio"] = s.MusicKeepAudio,
         ["neteaseCookieSet"] = !string.IsNullOrWhiteSpace(s.NeteaseCookie),
         ["enableStickers"] = s.EnableStickers,

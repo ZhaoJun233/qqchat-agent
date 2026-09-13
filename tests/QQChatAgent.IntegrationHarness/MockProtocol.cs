@@ -39,6 +39,19 @@ public sealed class MockProtocol : IDisposable
     /// <summary>get_group_msg_history 要返回的历史消息（按**最新在前**排列，与 NapCat 行为一致）。</summary>
     public List<(long MessageId, long UserId, string Sender, string Text)> GroupHistory { get; } = new();
 
+    /// <summary>构建 get_forward_msg 的响应（未登记的 id 返回空 nodes）。</summary>
+    private JsonObject BuildForwardRecord(string? id)
+    {
+        if (id is not null)
+        {
+            Interlocked.Increment(ref _forwardFetches);
+        }
+
+        var messages = id is not null && ForwardRecords.TryGetValue(id, out var nodes) ? nodes : new JsonArray();
+        Console.WriteLine($"      [mock] get_forward_msg id={id ?? "(null)"} keys={string.Join(",", ForwardRecords.Keys)} → {messages.Count} 条");
+        return new JsonObject { ["messages"] = messages.DeepClone() };
+    }
+
     /// <summary>构建 get_group_msg_history 的响应。</summary>
     private JsonObject BuildHistory()
     {
@@ -214,6 +227,7 @@ public sealed class MockProtocol : IDisposable
                 "get_status" => new JsonObject { ["online"] = AccountOnline, ["good"] = AccountOnline },
                 "get_group_info" => new JsonObject { ["group_id"] = 99999, ["group_name"] = GroupName },
                 "get_group_msg_history" => BuildHistory(),
+                "get_forward_msg" => BuildForwardRecord(root["params"]?["id"]?.GetValue<string>()),
                 "send_group_msg" or "send_private_msg" => new JsonObject { ["message_id"] = 555 },
                 _ => new JsonObject()
             };
@@ -375,6 +389,89 @@ public sealed class MockProtocol : IDisposable
         };
 
         await SendRawAsync(evt.ToJsonString(), ct);
+    }
+
+    /// <summary>合并转发的聊天记录：forward id → 节点数组（get_forward_msg 会返回它）。</summary>
+    public Dictionary<string, JsonArray> ForwardRecords { get; } = new();
+
+    /// <summary>收到过几次 get_forward_msg（验证“真的去拉内容了”）。</summary>
+    public int ForwardFetchCount => Volatile.Read(ref _forwardFetches);
+
+    private int _forwardFetches;
+
+    /// <summary>发一条自定义段组合的群消息（转发/卡片/文件等都用它）。</summary>
+    public async Task SendGroupSegmentsAsync(
+        long groupId,
+        long userId,
+        string senderName,
+        long messageId,
+        JsonArray segments,
+        string rawMessage,
+        CancellationToken ct = default)
+    {
+        var evt = new JsonObject
+        {
+            ["post_type"] = "message",
+            ["message_type"] = "group",
+            ["sub_type"] = "normal",
+            ["message_id"] = messageId,
+            ["group_id"] = groupId,
+            ["user_id"] = userId,
+            ["self_id"] = SelfId,
+            ["raw_message"] = rawMessage,
+            ["time"] = DateTimeOffset.Now.ToUnixTimeSeconds(),
+            ["message"] = segments,
+            ["sender"] = new JsonObject
+            {
+                ["user_id"] = userId,
+                ["nickname"] = senderName,
+                ["card"] = senderName,
+                ["role"] = "member"
+            }
+        };
+
+        await SendRawAsync(evt.ToJsonString(), ct);
+    }
+
+    /// <summary>发一条“合并转发聊天记录”。</summary>
+    public Task SendGroupForwardAsync(long groupId, long userId, string senderName, string forwardId, long messageId,
+        string? text = null, CancellationToken ct = default)
+    {
+        var segments = new JsonArray();
+        if (text is not null)
+        {
+            segments.Add(new JsonObject { ["type"] = "text", ["data"] = new JsonObject { ["text"] = text } });
+        }
+
+        segments.Add(new JsonObject { ["type"] = "forward", ["data"] = new JsonObject { ["id"] = forwardId } });
+        return SendGroupSegmentsAsync(groupId, userId, senderName, messageId, segments,
+            (text ?? string.Empty) + $"[CQ:forward,id={forwardId}]", ct);
+    }
+
+    /// <summary>拼一个转发节点（模拟其他人转过来的聊天记录）。</summary>
+    public static JsonObject ForwardNode(long userId, string nickname, params string[] texts)
+    {
+        var segments = new JsonArray();
+        foreach (var t in texts)
+        {
+            if (t == "[图片]")
+            {
+                segments.Add(new JsonObject { ["type"] = "image", ["data"] = new JsonObject { ["file"] = "x.jpg" } });
+            }
+            else
+            {
+                segments.Add(new JsonObject { ["type"] = "text", ["data"] = new JsonObject { ["text"] = t } });
+            }
+        }
+
+        return new JsonObject
+        {
+            ["user_id"] = userId,
+            ["nickname"] = nickname,
+            ["sender"] = new JsonObject { ["user_id"] = userId, ["nickname"] = nickname },
+            ["message"] = segments,
+            ["time"] = DateTimeOffset.Now.ToUnixTimeSeconds()
+        };
     }
 
     public async Task SendPrivateMessageAsync(long userId, string senderName, string text, long messageId, CancellationToken ct = default)

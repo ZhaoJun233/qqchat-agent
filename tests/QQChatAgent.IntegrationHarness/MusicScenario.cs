@@ -151,6 +151,27 @@ public static partial class Program
         Check("★ 关掉后不再分析音乐（提示词里没有波形/歌词，也没有再下载音频）",
             plain is not null && !plain.Contains("波形实测") && music.AudioHits == audioBefore,
             $"audioHits {audioBefore} → {music.AudioHits}");
+
+        // ---- 4) 群里说“去听一下 X”：模型填 listen → 机器人真去搜歌、听、再回来聊 ----
+        // （线上就是这么被抱怨的：群友纯文字让它听歌，旧实现完全不理会）
+        // 先把上一步关掉的总开关重新打开
+        var reopen = await http.PostAsync($"http://127.0.0.1:{panelPort}/api/settings",
+            new StringContent("""{"enableMusic":true}""", Encoding.UTF8, "application/json"), cts.Token);
+        Check("★ 重新打开听音乐开关", reopen.IsSuccessStatusCode);
+        await Task.Delay(300);
+
+        openAi.ClearRequests();
+        openAi.EnqueueReply("""{"suitability": 88, "reply": "我去听听。", "listen": "测试小夜曲 测试歌手"}""");
+        await protocol.SendGroupMessageAsync(groupId, 30014, "群友B",
+            "@10001 去听一下测试小夜曲", 9307, mentionBot: true, ct: cts.Token);
+
+        var afterListen = await WaitForRequestAsync(openAi,
+            r => r.Contains("波形实测") && r.Contains("我去听听"), TimeSpan.FromSeconds(90));
+        Check("★ 群里让它听歌会真的去搜索（模型用 listen 字段发起）",
+            music.SearchHits >= 1, $"searchHits={music.SearchHits}");
+        Check("★ 听完后带着歌词与波形实测回来接话（而不是只回一句“我去听听”）",
+            afterListen is not null && afterListen.Contains("测试歌词第一句"),
+            afterListen is null ? "(没等到听完之后的回复)" : "已把实测数据交给模型");
     }
 
     /// <summary>等一条满足条件的模型请求（返回请求全文，超时返回 null）。</summary>

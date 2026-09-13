@@ -388,6 +388,10 @@
               <label>分析结果保留（天）<span class="hint">过期会重新分析一次</span></label>
               <input type="number" id="setMusicNoteTtlDays" min="1" max="365" step="1" />
             </div>
+            <div class="field">
+              <label>“去听一下”冷却（秒）<span class="hint">群里让机器人听歌时，同一会话多久内只搜一次；0 = 不限</span></label>
+              <input type="number" id="setMusicListenCooldown" min="0" max="86400" step="30" />
+            </div>
           </div>
 
           <label class="switch-row">
@@ -396,6 +400,32 @@
             <span>保留下载的音频<span class="hint">默认分析完就删；打开后留在 data/music/audio</span></span>
           </label>
           <p class="path-hint" id="musicHint"></p>
+        </div>
+
+        <!-- 链接与分享 -->
+        <div class="card">
+          <div class="card-head">
+            <h3>链接与分享</h3>
+            <p>群友发链接或分享卡片时，机器人会真去打开看一眼，取回标题与摘要再聊 —— 而不是对着一串 URL 猜。
+              另外，<b>合并转发的聊天记录</b>会被拉取展开成正文（前 20 行），群里发的东西不再是空气。</p>
+          </div>
+
+          <label class="switch-row">
+            <input type="checkbox" id="setEnableLinkPreview" />
+            <span class="switch"></span>
+            <span>启用链接预览（打开链接取标题/摘要）</span>
+          </label>
+
+          <div class="grid-2">
+            <div class="field">
+              <label>抓取超时（秒）<span class="hint">慢站点不能拖住机器人</span></label>
+              <input type="number" id="setLinkPreviewTimeout" min="2" max="30" step="1" />
+            </div>
+            <div class="field">
+              <label>每条消息最多预览<span class="hint">个链接</span></label>
+              <input type="number" id="setLinkPreviewMax" min="0" max="5" step="1" />
+            </div>
+          </div>
         </div>
 
         <!-- 戳一戳 -->

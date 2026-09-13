@@ -35,6 +35,22 @@ public sealed partial class MusicService
     }
 
     /// <summary>
+    /// 按歌名“去听一下”：先在网易云搜歌，搜到就走和分享一样的流程（歌词 + 波形）。
+    /// 这是群里说“@机器人 去听一下 XXX”时走的路 —— 以前只认分享卡片，所以那句话完全没反应。
+    /// </summary>
+    public async Task<string?> DescribeByNameAsync(string keyword, string senderName, CancellationToken ct)
+    {
+        var share = await _netease.SearchAsync(keyword, ct);
+        if (share is null)
+        {
+            return null;
+        }
+
+        _log($"[Music] 搜到「{share.Title} - {share.Artist}」(# {share.SongId})，开始听");
+        return await DescribeAsync(share, senderName, ct);
+    }
+
+    /// <summary>
     /// 处理一条分享：返回要注入上下文的“事实描述”；完全没信息时返回 null。
     /// </summary>
     public async Task<string?> DescribeAsync(MusicShare share, string senderName, CancellationToken ct)

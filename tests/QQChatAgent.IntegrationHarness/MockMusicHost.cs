@@ -37,6 +37,11 @@ public sealed class MockMusicHost : IDisposable
 
     public string Artist { get; }
 
+    /// <summary>搜索接口被访问次数（验证“按歌名去听”真的发起了搜索）。</summary>
+    public int SearchHits => Volatile.Read(ref _searchHits);
+
+    private int _searchHits;
+
     /// <summary>有音频可下的歌曲 id。不在里面的（如 999002）音频接口返回 404 —— 用来验证“没音源也能降级”。</summary>
     public HashSet<long> AudioSongIds { get; } = [999001];
 
@@ -96,6 +101,13 @@ public sealed class MockMusicHost : IDisposable
                 Interlocked.Increment(ref _apiHits);
                 body = Encoding.UTF8.GetBytes(
                     $$"""{"songs":[{"name":"{{Title}}","duration":45000,"album":{"name":"测试专辑"},"artists":[{"name":"{{Artist}}"}]}]}""");
+                contentType = "application/json";
+            }
+            else if (path.StartsWith("/api/search/get", StringComparison.Ordinal))
+            {
+                Interlocked.Increment(ref _searchHits);
+                body = Encoding.UTF8.GetBytes(
+                    "{\"result\":{\"songs\":[{\"id\":999001,\"name\":\"" + Title + "\",\"duration\":45000,\"artists\":[{\"name\":\"" + Artist + "\"}]}]}}");
                 contentType = "application/json";
             }
             else if (path.StartsWith("/api/song/lyric", StringComparison.Ordinal))

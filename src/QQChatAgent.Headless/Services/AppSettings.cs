@@ -151,6 +151,17 @@ public sealed class AppSettings
     /// <summary>同时向模型发起的最大请求数（按会话串行、跨会话并发）。</summary>
     public int MaxConcurrentReplies { get; set; } = 2;
 
+    // ---------- 链接与分享卡片 ----------
+
+    /// <summary>群里发的链接要不要真打开看一下（取标题/摘要）——给模型“看看里面写了什么”的根据。</summary>
+    public bool EnableLinkPreview { get; set; } = true;
+
+    /// <summary>单个链接的抓取超时（秒）。慢站点不能拖住机器人。</summary>
+    public int LinkPreviewTimeoutSeconds { get; set; } = 5;
+
+    /// <summary>一条消息里最多预览几个链接。</summary>
+    public int LinkPreviewMax { get; set; } = 3;
+
     // ---------- 听音乐（识别群里的音乐分享 + 网易云歌词 + 波形分析） ----------
 
     /// <summary>启用“听音乐”：有人分享歌时，自动查歌词、下一份低码率音频分析波形，再交模型接话。</summary>
@@ -184,6 +195,9 @@ public sealed class AppSettings
 
     /// <summary>分析结果保留天数：超过就重新分析一次（音源/算法可能变过）。</summary>
     public int MusicNoteTtlDays { get; set; } = 30;
+
+    /// <summary>模型想听一首歌时的最小间隔（秒），防同一个话题反复搜歌；0 = 不限。</summary>
+    public int MusicListenCooldownSeconds { get; set; } = 120;
 
     /// <summary>是否把下载的音频留在 data/music/audio（默认不留：服务器上不攒版权内容）。</summary>
     public bool MusicKeepAudio { get; set; }
