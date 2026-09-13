@@ -108,12 +108,29 @@ public sealed class NeteaseMusicClient
 
         try
         {
-            var path = "/api/search/get?s=" + Uri.EscapeDataString(keyword.Trim()) + "&type=1&limit=1&offset=0";
+            var path = "/api/search/get?s=" + Uri.EscapeDataString(keyword.Trim()) + "&type=1&limit=10&offset=0";
             var json = await GetJsonAsync(path, ct);
-            var song = json is { } root && root.TryGetProperty("result", out var result) &&
-                        result.TryGetProperty("songs", out var songs) && songs.ValueKind == JsonValueKind.Array && songs.GetArrayLength() > 0
-                ? songs[0]
-                : (JsonElement?)null;
+            var candidates = json is { } root && root.TryGetProperty("result", out var result) &&
+                             result.TryGetProperty("songs", out var songs) && songs.ValueKind == JsonValueKind.Array
+                ? songs.EnumerateArray().ToList()
+                : [];
+
+            if (candidates.Count == 0)
+            {
+                _log($"[Music] 搜不到「{keyword}」");
+                return null;
+            }
+
+            // 搜索接口的第一条经常不是人要的那首（搜“起风了 买辣椒也用券”可能先给别的）——
+            // 所以在前几条里按“歌名/歌手是否出现在这句话里”打个分，取最像的。
+            var wanted = keyword.Trim();
+            var best = candidates
+                .Select((s, index) => (Song: s, Score: MatchScore(s, wanted) - index * 0.01))
+                .OrderByDescending(x => x.Score)
+                .First()
+                .Song;
+
+            var song = (JsonElement?)best;
 
             if (song is not { } s || !s.TryGetProperty("id", out var idNode))
             {
@@ -134,6 +151,42 @@ public sealed class NeteaseMusicClient
             _log($"[Music] 搜索「{keyword}」失败: {ex.Message}");
             return null;
         }
+    }
+
+    /// <summary>候选歌曲与这句话的匹配程度：歌名命中最低分最高，歌手命中次之（用于从搜索结果里选最像的那首）。</summary>
+    private static double MatchScore(JsonElement s, string wanted)
+    {
+        var name = s.TryGetProperty("name", out var n) ? n.GetString() ?? string.Empty : string.Empty;
+        var artists = s.TryGetProperty("artists", out var a) && a.ValueKind == JsonValueKind.Array
+            ? string.Join(" ", a.EnumerateArray().Select(x => x.TryGetProperty("name", out var an) ? an.GetString() : null).Where(x => !string.IsNullOrWhiteSpace(x)))
+            : string.Empty;
+
+        var score = 0.0;
+        if (name.Length > 0)
+        {
+            if (wanted.Contains(name, StringComparison.OrdinalIgnoreCase))
+            {
+                score += 3;                       // 歌名原样出现在这句话里 = 最像
+            }
+            else if (name.Contains(wanted, StringComparison.OrdinalIgnoreCase))
+            {
+                score += 2;
+            }
+            else if (wanted.Contains(name[..Math.Min(2, name.Length)], StringComparison.OrdinalIgnoreCase))
+            {
+                score += 0.5;                     // 至少开头两字对得上（“起风了”→“起风”类截断）
+            }
+        }
+
+        foreach (var artist in artists.Split(' ', StringSplitOptions.RemoveEmptyEntries))
+        {
+            if (wanted.Contains(artist, StringComparison.OrdinalIgnoreCase))
+            {
+                score += 1.5;                     // 点名的歌手也加分：同一个歌名很多版本，认歌手
+            }
+        }
+
+        return score;
     }
 
     /// <summary>跟进短链跳转，拿到最终地址（网易云分享短链 163cn.tv / 手机分享链）。</summary>

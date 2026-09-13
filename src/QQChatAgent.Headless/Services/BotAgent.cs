@@ -994,6 +994,30 @@ public sealed class BotAgent : IDisposable
         }
     }
 
+    /// <summary>最近一次“面板自测听歌”的歌名（给 /api/music/test 回报用）。</summary>
+    public string? LastMusicTestHeader { get; private set; }
+
+    /// <summary>
+    /// 面板自测：把“听音乐”整套链路跑一遍（搜歌 → 歌词 → 低码率音源 → 波形分析）。
+    /// 返回给模型看的“事实描述”（拿不到就返回 null）。
+    /// 本方法只在面板自测时用，不影响群里的正常流程。
+    /// </summary>
+    public async Task<string?> TestMusicAsync(string song, CancellationToken ct)
+    {
+        LastMusicTestHeader = null;
+        if (_music is null)
+        {
+            return null;
+        }
+
+        var note = await _music.DescribeByNameAsync(song, "面板自测", ct);
+        LastMusicTestHeader = song;
+        EmitLog(note is null
+            ? $"[Music] 面板自测「{song}」：没搜到或没听到"
+            : $"[Music] 面板自测「{song}」完成");
+        return note;
+    }
+
     /// <summary>
     /// 听音乐：拿歌词 + 低码率音频做波形分析，把实测到的事实留给下一轮回复。
     /// 分析完成后单独触发一次发言机会 —— 这样模型是“听完再说”，而不是先瞎猜一遍再补课。

@@ -379,6 +379,15 @@ public sealed class WebUiServer : IDisposable
             return;
         }
 
+        // /api/music/test：一键验证“听音乐”链路（搜索 → 歌词 → 低码率音源 → 波形分析）
+        // 为什么要这个入口：这条链路依赖外部 API，挂了只能在群里碰运气 ——
+        // 这里可以直接跑一遍，把实测结果贴出来（排障与上线验收都用得上）。
+        if (path.Equals("/api/music/test", StringComparison.OrdinalIgnoreCase))
+        {
+            await HandleMusicTestAsync(context, method);
+            return;
+        }
+
         // /api/stickers 及子路径（表情包库：列表 / 取图 / 删除 / 立即巡检 / 导入）
         if (path.Equals("/api/stickers", StringComparison.OrdinalIgnoreCase) ||
             path.StartsWith("/api/stickers/", StringComparison.OrdinalIgnoreCase))
@@ -1186,6 +1195,50 @@ public sealed class WebUiServer : IDisposable
         if (bytes.Length > 0)
         {
             await context.Response.OutputStream.WriteAsync(bytes);
+        }
+    }
+
+    /// <summary>/api/music/test：把“听音乐”链路真跑一遍（搜歌 → 歌词 → 低码率音源 → 波形分析）。</summary>
+    private async Task HandleMusicTestAsync(HttpListenerContext context, string method)
+    {
+        if (method != "POST")
+        {
+            await WriteJsonAsync(context, 405, new JsonObject { ["error"] = "method not allowed" });
+            return;
+        }
+
+        JsonNode? body;
+        try
+        {
+            body = await ReadJsonAsync(context);
+        }
+        catch (Exception)
+        {
+            await WriteJsonAsync(context, 400, new JsonObject { ["error"] = "请求体不是合法 JSON" });
+            return;
+        }
+
+        var song = body?["song"]?.GetValue<string>()?.Trim();
+        if (string.IsNullOrWhiteSpace(song) || song.Length > 60)
+        {
+            await WriteJsonAsync(context, 400, new JsonObject { ["error"] = "请填 song（歌名，可带歌手，≤ 60 字）" });
+            return;
+        }
+
+        try
+        {
+            var note = await _agent.TestMusicAsync(song, CancellationToken.None);
+            var song2 = _agent.LastMusicTestHeader;
+            await WriteJsonAsync(context, 200, new JsonObject
+            {
+                ["ok"] = note is not null,
+                ["song"] = song2,
+                ["note"] = note ?? "没搜到，或这首歌没拿到音源且没有歌词"
+            });
+        }
+        catch (Exception ex)
+        {
+            await WriteJsonAsync(context, 500, new JsonObject { ["error"] = ex.Message });
         }
     }
 

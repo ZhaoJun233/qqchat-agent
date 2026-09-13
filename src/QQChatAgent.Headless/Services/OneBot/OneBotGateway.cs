@@ -457,26 +457,19 @@ public sealed class OneBotGateway : IQqChatSource, IDisposable
         {
             if (postType == "message")
             {
-                // 消息处理要发动作（取合并转发的聊天记录），必须异步 ——
+                // 有合并转发时要去发 get_forward_msg 取内容，这一步必须异步 ——
                 // 在接收线程上同步阻塞会死锁：动作响应要回到同一条接收泵才能读到。
-                // 但**顺序必须保住**（会话序号、上下文顺序都依赖于它）→ 串行闸门：
-                // 每次只处理一条，后面的排队等 —— 既不死锁，也不乱序。
-                _ = Task.Run(async () =>
+                // 但**普通消息绝不能异步**：线程池调度顺序 ≠ 到达顺序，
+                // 实测会把“第6句”排在“第11句”后面（会话序号、上下文全跟着乱）。
+                // 所以只有带转发的消息才丢到后台去，其余照旧同步处理（其中不含任何 await 动作）。
+                if (HasForwardSegment(root))
                 {
-                    await _messageGate.WaitAsync();
-                    try
-                    {
-                        await HandleMessageEventCoreAsync(root);
-                    }
-                    catch (Exception ex)
-                    {
-                        Log("处理消息事件出错: " + ex.Message);
-                    }
-                    finally
-                    {
-                        _messageGate.Release();
-                    }
-                });
+                    _ = Task.Run(() => HandleMessageEventAsync(root));
+                }
+                else
+                {
+                    HandleMessageEventCoreAsync(root).GetAwaiter().GetResult();
+                }
             }
             else if (postType == "notice")
             {
@@ -578,8 +571,24 @@ public sealed class OneBotGateway : IQqChatSource, IDisposable
         }
     }
 
-    /// <summary>消息串行闸门：保证多条消息按到达顺序处理（异步取转发记录之后也不能乱序）。</summary>
-    private readonly SemaphoreSlim _messageGate = new(1, 1);
+    /// <summary>这条消息里有没有合并转发段（决定要不要走异步取内容）。</summary>
+    private static bool HasForwardSegment(JsonNode root)
+    {
+        if (root["message"] is not JsonArray segments)
+        {
+            return root["raw_message"]?.GetValue<string>()?.Contains("[CQ:forward", StringComparison.Ordinal) == true;
+        }
+
+        foreach (var seg in segments)
+        {
+            if (seg?["type"]?.GetValue<string>() == "forward")
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
 
     private async Task HandleMessageEventCoreAsync(JsonNode root)
     {
