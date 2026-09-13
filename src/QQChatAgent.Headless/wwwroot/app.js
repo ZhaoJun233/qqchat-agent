@@ -876,8 +876,7 @@
     $("setMusicKeepAudio").checked = r.musicKeepAudio === true;
     $("musicHint").textContent = "网易云 Cookie：" + (r.neteaseCookieSet ? "已设置（环境变量）" : "未设置（可选）");
     $("setEnableLinkPreview").checked = r.enableLinkPreview !== false;
-    $("setEnableWebSearch").checked = r.enableWebSearch === true;
-    $("setWebSearchUseModelSearch").checked = r.webSearchUseModelSearch !== false;
+    $("setEnableWebSearch").checked = r.enableWebSearch === true;    $("setWebSearchUseModelSearch").checked = r.webSearchUseModelSearch !== false;
     $("setWebSearchSources").value = r.webSearchSources || "";
     $("setWebSearchMaxResults").value = r.webSearchMaxResults;
     $("setWebSearchTimeoutSeconds").value = r.webSearchTimeoutSeconds;
@@ -1407,10 +1406,33 @@
         const r = await api("/api/voice/health");
         const voices = (r && r.voices) || [];
         out.textContent = `TTS 正常：${r.url}；当前音色 ${r.currentVoice}；可用 ${voices.join("、") || "(没列出)"}`;
+        fillVoiceOptions(voices);
       } catch (err) {
         const detail = (err.data && err.data.error) || err.message;
         const url = err.data && err.data.url ? `（地址 ${err.data.url}）` : "";
         out.textContent = "TTS 不可用：" + detail + url;
+      }
+    });
+
+    /* 音色候选项以“服务端实际装了的”为准。
+       以前写死四个（模拟器里的 onnx 就没装），选到没装的就只能报错。 */
+    function fillVoiceOptions(voices) {
+      if (!voices || !voices.length) return;
+      const list = $("voiceNameOptions");
+      if (!list) return;
+      const current = $("setVoiceName").value.trim();
+      const all = voices.includes(current) || !current ? voices : [current, ...voices];
+      list.replaceChildren(...all.map((v) => Object.assign(document.createElement("option"), { value: v })));
+    }
+
+    // 点开音色输入框时顺手拉一次“服务端装了哪些音色”（失败就保留 HTML 里的静态候选）。
+    // 不放在 loadSettings 里：那里是“保存契约”的关键路径，不该加网络请求。
+    $("setVoiceName").addEventListener("focus", async () => {
+      try {
+        const r = await api("/api/voice/health");
+        fillVoiceOptions((r && r.voices) || []);
+      } catch (err) {
+        // 忽略：TTS 没起来时不该阻塞设置页
       }
     });
 
