@@ -460,7 +460,16 @@
             </div>
           </div>
 
-          <p class="path-hint" id="voiceHint">换音色就是换一个 onnx 模型（音色即模型）；想复现某个特定人的音色需先拿到授权并单独训练。</p>
+          <div class="sticker-actions">
+            <input type="text" id="voiceTestText" maxlength="80" placeholder="试听一句（默认：你好，我是机器人…）" style="flex:1" />
+            <button class="ghost-btn" id="voiceTestGo">试听一句</button>
+            <button class="ghost-btn" id="voiceHealthGo">检查 TTS 服务</button>
+            <span class="path-hint" id="voiceTestHint"></span>
+          </div>
+          <div id="voiceTestAudio"></div>
+
+          <p class="path-hint" id="voiceHint">换音色就是换一个 onnx 模型（音色即模型）；想复现某个特定人的音色需先拿到授权并单独训练。
+            试听用的是<b>已保存</b>的「TTS 服务地址」——改了地址先点保存再试听。</p>
         </div>
 
         <!-- 链接与分享 -->

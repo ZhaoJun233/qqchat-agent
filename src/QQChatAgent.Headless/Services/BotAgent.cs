@@ -7,6 +7,7 @@ using System.Text;
 using QQChatAgent.Services.Stickers;
 using QQChatAgent.Services.Music;
 using QQChatAgent.Services.Links;
+using QQChatAgent.Services.Voice;
 
 namespace QQChatAgent.Services;
 
@@ -779,6 +780,7 @@ public sealed class BotAgent : IDisposable
         _mood.Load(AppPaths.RuntimeRoot);
         ApplyMoodTtl();
         BuildMusicService();
+        _voice = new VoiceService(_voiceHttp, () => _settings, EmitLog);
 
         RebuildTimersIfNeeded(); // 静默兜底 + 画像巡检 + 表情包巡检（运行时改配置走同一段逻辑）
 
@@ -997,6 +999,31 @@ public sealed class BotAgent : IDisposable
     /// <summary>最近一次“面板自测听歌”的歌名（给 /api/music/test 回报用）。</summary>
     public string? LastMusicTestHeader { get; private set; }
 
+    /// <summary>语音（TTS）客户端（面板试听用）。</summary>
+    public VoiceService? Voice => _voice;
+
+    /// <summary>
+    /// 面板自测：真合成一句语音（走 /speak），把 wav 字节还给面板自己播。
+    /// 只合成、不发群 —— 面板里重点验证的是“TTS 服务通不通、音色/语速对不对”。
+    /// </summary>
+    public async Task<(byte[]? Data, string? Error)> TestVoiceAsync(
+        string text,
+        string? voiceOverride,
+        int? speedOverride,
+        CancellationToken ct)
+    {
+        if (_voice is null)
+        {
+            return (null, "语音服务还没初始化");
+        }
+
+        var (data, error) = await _voice.SynthesizeAsync(text, voiceOverride, speedOverride, ct);
+        EmitLog(data is null
+            ? $"[Voice] 面板试听失败：{error}"
+            : $"[Voice] 面板试听成功（{text.Length} 字 → {data.Length / 1024} KB wav）");
+        return (data, error);
+    }
+
     /// <summary>
     /// 面板自测：把“听音乐”整套链路跑一遍（搜歌 → 歌词 → 低码率音源 → 波形分析）。
     /// 返回给模型看的“事实描述”（拿不到就返回 null）。
@@ -1165,6 +1192,15 @@ public sealed class BotAgent : IDisposable
 
     /// <summary>听音乐专用的 HttpClient（下载音频可能几 MB，超时给宽松点）。</summary>
     private readonly HttpClient _musicHttp = new() { Timeout = TimeSpan.FromSeconds(45) };
+
+    /// <summary>语音（TTS）专用 HttpClient：合成一句要几秒（Piper 串行推理），超时给 30 秒。</summary>
+    private readonly HttpClient _voiceHttp = new() { Timeout = TimeSpan.FromSeconds(30) };
+
+    /// <summary>语音（TTS）客户端：拼 /speak 地址、面板试听时真取 wav。Start() 里组装。</summary>
+    private VoiceService? _voice;
+
+    /// <summary>每个会话最近一次发语音的时间（频率门：语音是“稀罕事”，不能每句都发）。</summary>
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, DateTimeOffset> _lastVoice = new();
 
     /// <summary>听音乐：识别到的分享 → 网易云歌词 + 低码率音频 → 波形分析。Start() 里组装。</summary>
     private MusicService? _music;
@@ -1889,7 +1925,8 @@ public sealed class BotAgent : IDisposable
                 moodText: moodText,
                 musicText: musicText,
                 linkText: linkText,
-                enableListen: _settings.EnableMusic);
+                enableListen: _settings.EnableMusic,
+                enableVoice: _settings.EnableVoice);
         }
         catch (Exception ex)
         {
@@ -2025,6 +2062,10 @@ public sealed class BotAgent : IDisposable
 
         var reply = (result.Reply ?? string.Empty).Trim();
 
+        // 模型想“用语音说这句”（speak）。真正的发送在下边（要等 isGroup/targetId），
+        // 这里先把文本取出来：它得参与“沉默判定”与消息落库，否则“只发语音不说话”会被当成空回复。
+        var voiceText = (result.Speak ?? string.Empty).Trim();
+
         // 模型可以顺手写一句“我现在的心情”——存下来，下一轮提示词里带上（空/太长会被忽略）
         if (_mood.SetText(result.Mood, DateTimeOffset.Now))
         {
@@ -2034,7 +2075,7 @@ public sealed class BotAgent : IDisposable
         // 模型可以“只戳不说话”：这样也算有动作，不算沉默
         var pokeTarget = result.PokeTargetId;
 
-        if (reply.Length == 0 && sticker is null && pokeTarget is null)
+        if (reply.Length == 0 && sticker is null && pokeTarget is null && voiceText.Length == 0)
         {
             var why = result.Suitability is int s2 ? $"自评 {s2}" : "空回复";
             EmitLog($"模型选择沉默（{why}，{elapsed:F0}ms）: {conversation.Name}");
@@ -2089,11 +2130,89 @@ public sealed class BotAgent : IDisposable
             replyTo = targetIndex >= 0 && targetIndex < messages.Count - 1 ? quoteTarget : null;
         }
 
+        var (isGroup, targetId) = conversation.Target;
+
+        // ───── 语音（模型填了 speak）─────
+        // 怎么发：只把 TTS 的 /speak URL 交给协议端，让 NapCat 自己去下载 → 转 silk → 上传
+        // （见 OneBotGateway.SendVoiceAsync）—— 机器人这边不碰音频编码。
+        // 为什么得克制：合成要几秒 CPU、音频占流量、群里语音连发就是刷屏。
+        // 提示词让它“偶尔用”，代码侧再加一道同会话 45 秒的闸门。
+        string? voiceUrl = null;
+        string? voiceSkipWhy = null;
+        if (voiceText.Length > 0)
+        {
+            var maxChars = Math.Clamp(_settings.VoiceMaxChars, 10, 300);
+            if (!_settings.EnableVoice || _voice is null)
+            {
+                voiceSkipWhy = "语音消息开关是关的";
+            }
+            else if (voiceText.Length > maxChars)
+            {
+                voiceSkipWhy = $"{voiceText.Length} 字超过上限 {maxChars}";
+            }
+            else if (!AllowVoice(conversation, out var voiceReason))
+            {
+                voiceSkipWhy = voiceReason;
+            }
+            else if ((voiceUrl = _voice.BuildSpeakUrl(voiceText)) is null)
+            {
+                voiceSkipWhy = "TTS 服务地址没配置（应形如 http://tts:5000）";
+            }
+        }
+
+        var voiceSent = false;
+        if (voiceUrl is not null)
+        {
+            voiceSent = await _source.SendVoiceAsync(isGroup, targetId, voiceUrl);
+            if (voiceSent)
+            {
+                _lastVoice[conversation.SourceKey] = DateTimeOffset.Now;
+                EmitLog($"[Voice] 已发语音（{voiceText.Length} 字，音色 {_voice!.VoiceName}）：{Shorten(voiceText, 40)}");
+            }
+            else
+            {
+                // 失败就退化成文字：内容一定要落到群里（最差也得让群友看到它想说什么）。
+                // 具体原因已由 SendVoiceAsync 把 retcode + 响应体打进日志。
+                EmitLog("[Voice] record 段没发出去 → 改发文字");
+            }
+        }
+        else if (voiceSkipWhy is not null)
+        {
+            EmitLog($"[Voice] 模型想用语音说，但{voiceSkipWhy} → 改发文字");
+        }
+
+        // 到底还发不发文字：
+        //   • 语音发成功了、且 reply 就是那句话（或没写 reply）→ 不再重复发同一句；
+        //   • 语音发成功了、但 reply 另写了内容 → 那是模型自己想补的话，照发；
+        //   • 语音没发出去 → 至少把要说的话当文字发出去。
+        var textReply = reply.Length > 0 ? reply : null;
+        if (voiceText.Length > 0)
+        {
+            if (voiceSent)
+            {
+                if (string.Equals(textReply, voiceText, StringComparison.Ordinal))
+                {
+                    textReply = null;
+                }
+            }
+            else
+            {
+                textReply ??= voiceText;
+            }
+        }
+
+        // 落库的这条“自己说过的话”：要让模型下一轮知道自己刚才是用声音说的、说了什么
+        var recordedText = voiceSent
+            ? textReply is null ? $"[语音] {voiceText}" : $"{textReply}（同时用语音说：{voiceText}）"
+            : reply.Length > 0 ? reply
+            : voiceText.Length > 0 ? voiceText
+            : "[表情包]";
+
         var appended = new ChatMessage
         {
             Role = MessageRole.Self,
-            // 只发图时也得在上下文里留个痕迹，否则模型下一轮不知道自己刚发过什么
-            Text = reply.Length > 0 ? reply : "[表情包]",
+            // 只发图（或只发语音）时也得在上下文里留个痕迹，否则模型下一轮不知道自己刚发过什么
+            Text = recordedText,
             Timestamp = DateTimeOffset.Now
         };
         conversation.Append(appended);
@@ -2101,13 +2220,16 @@ public sealed class BotAgent : IDisposable
         MessageAdded?.Invoke(conversation.SourceKey, appended);
         Save();
 
-        var (isGroup, targetId) = conversation.Target;
-        var sent = reply.Length > 0 && await SendWithCadenceAsync(isGroup, targetId, reply, replyTo);
+        var sent = voiceSent;
+        if (textReply is not null && await SendWithCadenceAsync(isGroup, targetId, textReply, replyTo))
+        {
+            sent = true;
+        }
 
         if (sticker is not null)
         {
             // 引用只给第一条消息，避免“文字 + 图”两条都带引用
-            var sentImage = await SendStickerAsync(isGroup, targetId, sticker, reply.Length > 0 ? null : replyTo);
+            var sentImage = await SendStickerAsync(isGroup, targetId, sticker, textReply is not null ? null : replyTo);
             sent = sent || sentImage;
             _stickers.MarkUsed(sticker.Id);
             if (sentImage)
@@ -2159,6 +2281,7 @@ public sealed class BotAgent : IDisposable
             $"{(sent ? "已回复" : "回复失败")} {conversation.Name}（{elapsed:F0}ms 生成" +
             $"{(result.Suitability is int sc ? $"，自评 {sc}" : string.Empty)}" +
             (reply.Length > 0 ? $"，{reply.Length} 字" : string.Empty) +
+            (voiceSent ? $"，语音 {voiceText.Length} 字" : string.Empty) +
             (sticker is not null ? $"，表情包 #{sticker.Id}（{StickerStore.Describe(sticker)}）" : string.Empty) +
             (pokeSent ? $"，戳了 {pokeTarget}" : string.Empty) +
             $"{(replyTo is not null ? "，带引用" : string.Empty)}）" +
@@ -2186,6 +2309,34 @@ public sealed class BotAgent : IDisposable
         if (last.TargetId == targetId && since < TimeSpan.FromMinutes(5))
         {
             reason = $"{since.TotalSeconds:F0}s 前刚戳过这个人";
+            return false;
+        }
+
+        return true;
+    }
+
+    /// <summary>同一个会话两次发语音的最小间隔（秒）。见 <see cref="AllowVoice" />。</summary>
+    private const int VoiceMinIntervalSeconds = 45;
+
+    /// <summary>
+    /// 语音频率门。为什么要它：
+    ///   • 语音在群里是“稀罕事”，连发就是刷屏（和表情包同一个道理）；
+    ///   • Piper 是 CPU 串行推理，一条要几秒，群里一热就是排队。
+    /// 提示词里已经反复要求模型克制，这里再加一道代码闸门 —— 模型不听话时也能兜住。
+    /// 想让它更松/更紧：改这个常量（故意不做成设置项，免得面板上多一个没人调的旋钮）。
+    /// </summary>
+    private bool AllowVoice(BotConversation conversation, out string reason)
+    {
+        reason = string.Empty;
+        if (!_lastVoice.TryGetValue(conversation.SourceKey, out var last))
+        {
+            return true;
+        }
+
+        var since = DateTimeOffset.Now - last;
+        if (since < TimeSpan.FromSeconds(VoiceMinIntervalSeconds))
+        {
+            reason = $"{since.TotalSeconds:F0}s 前刚发过语音（同一会话下限 {VoiceMinIntervalSeconds}s）";
             return false;
         }
 

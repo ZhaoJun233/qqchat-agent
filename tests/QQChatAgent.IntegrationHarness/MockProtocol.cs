@@ -39,6 +39,12 @@ public sealed class MockProtocol : IDisposable
     /// <summary>get_group_msg_history 要返回的历史消息（按**最新在前**排列，与 NapCat 行为一致）。</summary>
     public List<(long MessageId, long UserId, string Sender, string Text)> GroupHistory { get; } = new();
 
+    /// <summary>
+    /// 让指定动作失败（retcode 非 0）—— 用来验证“上游拒绝时机器人怎么降级”。
+    /// 例：S24 把 send_private_msg 投进去，看语音发不出去时会不会改发文字。
+    /// </summary>
+    public HashSet<string> FailActions { get; } = new(StringComparer.Ordinal);
+
     /// <summary>构建 get_forward_msg 的响应（未登记的 id 返回空 nodes）。</summary>
     private JsonObject BuildForwardRecord(string? id)
     {
@@ -232,12 +238,18 @@ public sealed class MockProtocol : IDisposable
                 _ => new JsonObject()
             };
 
+            var fail = false;
+            lock (_gate)
+            {
+                fail = FailActions.Contains(action);
+            }
+
             await SendRawAsync(new JsonObject
             {
-                ["status"] = "ok",
-                ["retcode"] = 0,
+                ["status"] = fail ? "failed" : "ok",
+                ["retcode"] = fail ? 1404 : 0,
                 ["echo"] = echo,
-                ["data"] = data
+                ["data"] = fail ? null : data
             }.ToJsonString(), ct);
         }
     }

@@ -46,7 +46,7 @@ public sealed class OpenAiClient
     /// 网络/接口异常向上抛，由调用方记日志。
     /// </summary>
     public async Task<CompletionResult> CompleteAsync(IReadOnlyList<ChatMessage> context, string? profilesText = null, CancellationToken ct = default,
-        IReadOnlyList<StickerChoice>? stickers = null, bool pokeContext = false, string? moodText = null, string? musicText = null, string? linkText = null, bool enableListen = false)
+        IReadOnlyList<StickerChoice>? stickers = null, bool pokeContext = false, string? moodText = null, string? musicText = null, string? linkText = null, bool enableListen = false, bool enableVoice = false)
     {
         if (string.IsNullOrWhiteSpace(_settings.ApiKey))
         {
@@ -145,6 +145,23 @@ public sealed class OpenAiClient
                 "分享要克制：别反复推同一首，也别每轮都发卡片（卡片比文字“重”得多）。";
         }
 
+        // 用语音说话：模型可以要求“这句用语音说”（speak 字段）。语音比文字“重”得多
+        // （合成要几秒、占流量、群里显眼），所以提示词里反复强调克制；代码侧还有一道最小间隔门。
+        if (enableVoice)
+        {
+            var maxChars = Math.Clamp(_settings.VoiceMaxChars, 10, 300);
+            systemContent +=
+                "\n\n[用语音说话]\n" +
+                "你**偶尔**可以用语音说一句。想这么做时，在 JSON 里加 speak 字段写上要说出口的话（≤ " + maxChars + " 字）：" +
+                "{\"suitability\": 85, \"reply\": \"…\", \"speak\": \"这句话我想用声音说\"}。机器人会把它合成语音发出去。\n" +
+                "什么时候值得用：情绪比文字重的时候（道谢、撒娇、学人说话、唱歌、委屈/开心），" +
+                "或者群友明确让你“说句话/唱一个/用语音”。**绝大多数时候还是打字**，别每句都发语音，" +
+                "也别连续两条都是语音 —— 群里语音是“稀罕事”，滥了就烦人。\n" +
+                "speak 里写的就是要说出口的那句话：口语化、短、别放链接/代码/括号里的舞台说明（如“(笑)”）；" +
+                "填了 speak 就不要再在 reply 里重复同一句话（语音已经说过了）。" +
+                "说不好或超过字数上限时，这次就按普通文字回，不要在上下文里提到“语音发不出去”。";
+        }
+
         // 被戳过才给的指令：戳回去是**可选**动作，看当下心情 —— 不必每次被戳都戳一次
         if (pokeContext)
         {
@@ -224,6 +241,27 @@ public sealed class OpenAiClient
             {
                 messages.Add(new JsonObject { ["role"] = role, ["content"] = content });
             }
+        }
+
+        // 上游（Gemini 等）不接受“最后一条是模型自己说的话”的请求：
+        //   Requests ending with a model turn are not supported.
+        // 而这恰好是机器人的一种正常情形 —— **自己触发的后续发言**：
+        //   • 听完歌回来接着聊（模型填了 listen，分析完再请求一次）
+        //   • 被戳之后想回一句（戳一戳不是消息，不往上下文里写）
+        //   • 静默兜底补的那次请求
+        // 这些时候上下文最后一条就是它自己刚说的话，一问就是 400。
+        // 修法：补一条系统口吻的 user 轮把它顶成 user —— 顺便告诉模型“这是你自己的后续动作，
+        // 不是又有人说话了”，免得它以为群里刚来了新消息、对着自己的话自问自答。
+        var lastRole = messages.Count > 0 ? messages[^1]?["role"]?.GetValue<string>() : null;
+        if (lastRole != "user")
+        {
+            messages.Add(new JsonObject
+            {
+                ["role"] = "user",
+                ["content"] = "（系统提示：上面最后一条是你自己刚说的话，之后没有新的群消息 —— " +
+                              "本轮是你自己的后续动作触发的。想说就接着说，不想说就把 reply 留空。）"
+            });
+            FileLog.Write("Agent", "上下文以自己发言结尾 → 补一条系统口吻的 user 轮（上游不接受 model-turn 结尾）");
         }
 
         var payload = new JsonObject
@@ -445,6 +483,26 @@ public sealed class OpenAiClient
                 }
             }
 
+            // 模型想“用语音说这句”（speak）：值可以是字符串（要说的话），也可以是 true（= 用语音说 reply）。
+            // 真正能不能发由上层决定（开关/字数上限/频率门/服务可达），这里只负责取值与基本清洗。
+            string? speak = null;
+            if (root.TryGetProperty("speak", out var sp) || root.TryGetProperty("用语音说", out sp))
+            {
+                if (sp.ValueKind == JsonValueKind.String)
+                {
+                    var spoken = sp.GetString()?.Trim();
+                    if (!string.IsNullOrWhiteSpace(spoken))
+                    {
+                        speak = spoken;
+                    }
+                }
+                else if (sp.ValueKind == JsonValueKind.True)
+                {
+                    // {"speak": true} = 把 reply 用语音说（模型偷懒时也能用）
+                    speak = string.IsNullOrWhiteSpace(reply) ? null : reply.Trim();
+                }
+            }
+
             // 模型顺手写的心情（≤ 24 字）：存起来给下一轮用；太长/非字符串一律忽略
             string? mood = null;
             if (root.TryGetProperty("mood", out var md) && md.ValueKind == JsonValueKind.String)
@@ -452,7 +510,7 @@ public sealed class OpenAiClient
                 mood = md.GetString()?.Trim();
             }
 
-            return new CompletionResult(suitability, string.IsNullOrWhiteSpace(reply) ? null : reply, rawReply, stickerId, replyToId, pokeTargetId, mood, listen, shareSong);
+            return new CompletionResult(suitability, string.IsNullOrWhiteSpace(reply) ? null : reply, rawReply, stickerId, replyToId, pokeTargetId, mood, listen, shareSong, speak);
         }
         catch (JsonException)
         {
@@ -539,6 +597,7 @@ public sealed class OpenAiClient
         || text.Contains("\"sticker\"", StringComparison.OrdinalIgnoreCase)
         || text.Contains("\"replyTo\"", StringComparison.OrdinalIgnoreCase)
         || text.Contains("\"mood\"", StringComparison.OrdinalIgnoreCase)
+        || text.Contains("\"speak\"", StringComparison.OrdinalIgnoreCase)
         || text.Contains("\"poke\"", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
@@ -1150,7 +1209,8 @@ public readonly record struct StickerChoice(string Id, string Description);
 /// <param name="Mood">模型顺手写的“我现在的心情”（≤ 24 字）；null = 没写。</param>
 /// <param name="Listen">模型想“听一听”的歌名/歌手（机器人会去搜索并分析波形）；null = 不想听。</param>
 /// <param name="ShareSong">模型想分享给群里的歌（机器人搜到后发一张网易云卡片）；null = 不分享。</param>
-public readonly record struct CompletionResult(int? Suitability, string? Reply, string? RawText, string? StickerId = null, long? ReplyToMessageId = null, long? PokeTargetId = null, string? Mood = null, string? Listen = null, string? ShareSong = null);
+/// <param name="Speak">模型想“用语音说”的句子（机器人合成语音发出去）；null = 不发语音。</param>
+public readonly record struct CompletionResult(int? Suitability, string? Reply, string? RawText, string? StickerId = null, long? ReplyToMessageId = null, long? PokeTargetId = null, string? Mood = null, string? Listen = null, string? ShareSong = null, string? Speak = null);
 
 /// <summary>图片下载器：把图片 URL 下载并转成 base64 data URL（供多模态模型识图），
 /// 也给表情包库提供原始字节。</summary>

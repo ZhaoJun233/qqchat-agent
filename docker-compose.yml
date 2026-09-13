@@ -102,6 +102,14 @@ services:
       QQCHAT_MOOD_TTL: ${MOOD_TTL:-7200}
       # 图片下载的 SSRF 防护默认开；只有“自建 NapCat 回内网地址”时才设 1
       QQCHAT_ALLOW_PRIVATE_IMAGE_HOSTS: ${ALLOW_PRIVATE_IMAGE_HOSTS:-0}
+      # ---- 语音消息（TTS）----
+      # 下面这几项都属“行为配置”：只在**首次部署**（还没有 settings.json 时）当种子，
+      # 之后 settings.json 是唯一所有者，改这里不会再生效 —— 要调请用面板「语音消息」卡片。
+      QQCHAT_ENABLE_VOICE: ${ENABLE_VOICE:-0}
+      QQCHAT_VOICE: ${TTS_VOICE:-zh_CN-huayan-medium}
+      QQCHAT_VOICE_SPEED: ${VOICE_SPEED:-100}
+      QQCHAT_VOICE_MAX_CHARS: ${VOICE_MAX_CHARS:-80}
+      QQCHAT_TTS_URL: ${TTS_URL:-http://tts:5000}
       QQCHAT_VERBOSE: ${VERBOSE:-1}
       TZ: ${TZ:-Asia/Shanghai}
     volumes:
@@ -115,6 +123,38 @@ services:
       timeout: 5s
       start_period: 15s
       retries: 3
+    networks:
+      - qqchat
+
+  # ─────────── 语音合成（Piper 旁路服务） ───────────
+  # 为什么单独开一个容器，而不是把 Piper 塞进机器人镜像：
+  #   • Piper 是 python + onnxruntime（镜像约 490MB），塞进去机器人镜像直接翻几倍；
+  #   • 语音是“偶尔用”的能力 —— 它挂了也只能影响语音（机器人会降级成发文字），不能拖垮对话。
+  # 镜像怎么来（一次性）：python:3.11-slim + pip install piper-tts → 见 tools/tts.Dockerfile
+  #    docker build -t piper-tts:latest -f tools/tts.Dockerfile tools/
+  # 音色模型（*.onnx）放 ./tts/（首次用 tools/tts-server.py 里的说明下载，约 63MB）。
+  # 机器人**不**搬运音频：它只把 http://tts:5000/speak?text=… 这个 URL 交给 NapCat，
+  # 由协议端自己下载并转 silk —— 所以 tts 必须和 napcat 在同一个网络里。
+  tts:
+    image: piper-tts:latest
+    container_name: qqchat-tts
+    restart: unless-stopped
+    # 底镜像的 ENTRYPOINT 是 `python -m piper`（Piper 自己的 CLI），
+    # 这里把它换成 python，再跑我们的 HTTP 旁路脚本 —— 少了 entrypoint 这行就会一直
+    # 以 piper CLI 启动并报 “the following arguments are required: -m/--model” 而重启循环。
+    entrypoint: ["python"]
+    command: ["/app/tts-server.py"]
+    environment:
+      - VOICE_DIR=/data
+      - DEFAULT_VOICE=${TTS_VOICE:-zh_CN-huayan-medium}
+      - PORT=5000
+      - TZ=${TZ:-Asia/Shanghai}
+    volumes:
+      - ./tts:/data                                  # 音色模型 + 旁路脚本
+      - ./tts/tts-server.py:/app/tts-server.py:ro     # 旁路服务脚本（由 deploy-qqchat.py 同步）
+    # 只给宿主机的自测入口（机器人走内部网络，不需要这个）
+    ports:
+      - "127.0.0.1:5010:5000"
     networks:
       - qqchat
 

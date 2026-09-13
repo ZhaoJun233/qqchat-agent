@@ -1301,6 +1301,72 @@
 
     $("musicTestNow").addEventListener("click", () => { openAudioSources(); });
 
+    /* ─────────── 语音（TTS）───────────
+       两条入口：
+         • 「试听一句」把文本交给机器人转发的 TTS，拿回 wav 字节直接在这里播 ——
+           当场就能确认“服务通不通、音色像不像、语速合不合适”；
+         • 「检查 TTS 服务」只看对方 /health 有没有应答（排障用，不合成）。
+       服务地址用的是**已保存**的设置（面板不做“拿任意 URL 去访问”的入口）。 */
+    $("voiceTestGo").addEventListener("click", async () => {
+      const out = $("voiceTestHint");
+      const text = $("voiceTestText").value.trim() || "你好呀，我是昭，这是一条语音测试。";
+      out.textContent = "正在合成…（第一次要等几秒）";
+      try {
+        const res = await fetch(withToken("/api/voice/test"), {
+          method: "POST",
+          headers: authHeaders({ "Content-Type": "application/json" }),
+          body: JSON.stringify({
+            text,
+            voice: $("setVoiceName").value.trim(),
+            speed: Number($("setVoiceSpeed").value)
+          })
+        });
+        if (!res.ok) {
+          const data = await res.json().catch(() => null);
+          out.textContent = "合成失败：" + ((data && data.error) || ("HTTP " + res.status));
+          return;
+        }
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        const kb = Math.round(blob.size / 1024);
+
+        // 合成好的音频挂到页面上（不只是自动播一次）：
+        // 浏览器不让自动播放（或没声卡/无头环境）时，还能手动点那个播放器听。
+        const holder = $("voiceTestAudio");
+        holder.innerHTML = "";
+        const audio = document.createElement("audio");
+        audio.controls = true;
+        audio.src = url;
+        audio.style.height = "32px";
+        audio.style.marginTop = "6px";
+        audio.addEventListener("ended", () => URL.revokeObjectURL(url));
+        holder.appendChild(audio);
+
+        try {
+          await audio.play();
+          out.textContent = `合成成功（${kb} KB）—— 正在播放…`;
+        } catch (playErr) {
+          out.textContent = `合成成功（${kb} KB）—— 浏览器没让自动播放，点开下面的播放器听：`;
+        }
+      } catch (err) {
+        out.textContent = "试听失败：" + err.message;
+      }
+    });
+
+    $("voiceHealthGo").addEventListener("click", async () => {
+      const out = $("voiceTestHint");
+      out.textContent = "正在问 TTS 服务…";
+      try {
+        const r = await api("/api/voice/health");
+        const voices = (r && r.voices) || [];
+        out.textContent = `TTS 正常：${r.url}；当前音色 ${r.currentVoice}；可用 ${voices.join("、") || "(没列出)"}`;
+      } catch (err) {
+        const detail = (err.data && err.data.error) || err.message;
+        const url = err.data && err.data.url ? `（地址 ${err.data.url}）` : "";
+        out.textContent = "TTS 不可用：" + detail + url;
+      }
+    });
+
     // 网易云扫码登录：拿二维码 → 每 2.5 秒问一次状态 → 803 = 成功
     let qrKey = null;
     let qrTimer = null;

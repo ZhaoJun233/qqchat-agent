@@ -115,6 +115,25 @@ public sealed class MockOpenAi : IDisposable
             }
         }
 
+        // 上游（Gemini 等）会给“以模型发言结尾”的请求直接返回 400：
+        //   Requests ending with a model turn are not supported.
+        // 机器人自己触发的后续发言（听完歌回来接话 / 被戳 / 静默兜底）恰好就是这种形状，
+        // 所以这里当**默认行为**把这件事变成红灯 —— 否则要等到线上 Gemini 报 400 才发现。
+        // （修法：OpenAiClient 在末尾补一条“系统口吻的 user 轮”。）
+        var lastRole = payload?["messages"]?.AsArray().LastOrDefault()?["role"]?.GetValue<string>();
+        if (lastRole is null or "assistant")
+        {
+            Console.WriteLine($"      [mock] 拒绝以模型发言结尾的请求（roles={string.Join(",", payload?["messages"]?.AsArray().Select(m => m?["role"]?.GetValue<string>()) ?? Array.Empty<string?>())}）");
+            var rejectBody = Encoding.UTF8.GetBytes(
+                "{\"error\": {\"code\": 400, \"message\": \"Requests ending with a model turn are not supported.\", \"status\": \"INVALID_ARGUMENT\"}}");
+            context.Response.StatusCode = 400;
+            context.Response.ContentType = "application/json";
+            context.Response.ContentLength64 = rejectBody.Length;
+            await context.Response.OutputStream.WriteAsync(rejectBody);
+            context.Response.Close();
+            return;
+        }
+
         // 人物画像请求：提示词里会要求“压缩成一段人物画像”。
         // 这类请求期望纯文本画像，不能拿聊天脚本（JSON）当回应。
         var systemPrompt = payload?["messages"]?.AsArray()

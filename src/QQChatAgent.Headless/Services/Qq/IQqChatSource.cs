@@ -30,6 +30,15 @@ public interface IQqChatSource
     /// <summary>向群聊/私聊发送纯文本。成功返回 true。replyToMessageId 用于触发 QQ 的"回复"引用。</summary>
     Task<bool> SendTextAsync(bool isGroup, long targetId, string text, CancellationToken ct = default, long? replyToMessageId = null);
 
+    /// <summary>
+    /// 发一条语音（OneBot 的 record 段）。
+    /// audioUrl 指向一个**协议端自己能访问**的音频地址（如 TTS 旁路容器的 /speak?text=…）：
+    /// 机器人不下载音频，把 URL 交给协议端去下载、转 silk、上传 —— 这样这边就不用碰 silk 编码。
+    /// 默认实现返回 false —— 不是每个协议端都支持，上层要能优雅降级成发文字。
+    /// </summary>
+    Task<bool> SendVoiceAsync(bool isGroup, long targetId, string audioUrl, CancellationToken ct = default)
+        => Task.FromResult(false);
+
     /// <summary>发送一张图片（表情包）。data 为图片原始字节，协议端用 base64:// 形式接收。</summary>
     Task<bool> SendImageAsync(bool isGroup, long targetId, byte[] data, CancellationToken ct = default, long? replyToMessageId = null);
 

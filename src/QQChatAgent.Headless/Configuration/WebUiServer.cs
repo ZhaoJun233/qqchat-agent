@@ -395,6 +395,21 @@ public sealed class WebUiServer : IDisposable
             return;
         }
 
+        // /api/voice/test：合成一句语音给面板自己播（验证 TTS 服务、音色、语速）。
+        // 只合成、不发群 —— 想验证“群里真能听到”得开开关让模型发，或者看 /api/voice/health。
+        if (path.Equals("/api/voice/test", StringComparison.OrdinalIgnoreCase))
+        {
+            await HandleVoiceTestAsync(context, method);
+            return;
+        }
+
+        // /api/voice/health：问一下 TTS 服务自己（活着吗、有哪些音色），用于一键排障
+        if (path.Equals("/api/voice/health", StringComparison.OrdinalIgnoreCase))
+        {
+            await HandleVoiceHealthAsync(context);
+            return;
+        }
+
         // /api/stickers 及子路径（表情包库：列表 / 取图 / 删除 / 立即巡检 / 导入）
         if (path.Equals("/api/stickers", StringComparison.OrdinalIgnoreCase) ||
             path.StartsWith("/api/stickers/", StringComparison.OrdinalIgnoreCase))
@@ -1343,6 +1358,80 @@ public sealed class WebUiServer : IDisposable
         {
             await WriteJsonAsync(context, 500, new JsonObject { ["error"] = ex.Message });
         }
+    }
+
+    /// <summary>
+    /// /api/voice/test：真合成一句语音（走 TTS 容器 /speak），直接把 wav 字节还给浏览器播。
+    /// 为什么返回二进制而不是 JSON+base64：浏览器直接 Blob 播放最省事，也不白扛 33% 的 base64 开销。
+    /// 音色/语速可以带参数（面板改了还没保存也能试听）；服务地址一律用已保存的设置 ——
+    /// 面板不足以成为“拿任意 URL 去访问”的入口（跟白名单/密码一个道理）。
+    /// </summary>
+    private async Task HandleVoiceTestAsync(HttpListenerContext context, string method)
+    {
+        if (method != "POST")
+        {
+            await WriteJsonAsync(context, 405, new JsonObject { ["error"] = "method not allowed" });
+            return;
+        }
+
+        JsonNode? body;
+        try
+        {
+            body = await ReadJsonAsync(context);
+        }
+        catch (Exception)
+        {
+            await WriteJsonAsync(context, 400, new JsonObject { ["error"] = "请求体不是合法 JSON" });
+            return;
+        }
+
+        var text = body?["text"]?.GetValue<string>()?.Trim();
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            await WriteJsonAsync(context, 400, new JsonObject { ["error"] = "请填 text（要说的一句话）" });
+            return;
+        }
+
+        if (text.Length > 300)
+        {
+            await WriteJsonAsync(context, 400, new JsonObject { ["error"] = $"文本太长（{text.Length} > 300），长文本请改用文字" });
+            return;
+        }
+
+        var voice = body?["voice"]?.GetValue<string>()?.Trim();
+        var speed = body?["speed"] is JsonNode sp && int.TryParse(sp.ToString(), out var parsedSpeed) ? parsedSpeed : (int?)null;
+
+        var (data, error) = await _agent.TestVoiceAsync(text, voice, speed, CancellationToken.None);
+        if (data is null)
+        {
+            await WriteJsonAsync(context, 502, new JsonObject { ["error"] = error ?? "合成失败" });
+            return;
+        }
+
+        context.Response.Headers["Cache-Control"] = "no-store";
+        await WriteBytesAsync(context, 200, "audio/wav", data);
+    }
+
+    /// <summary>/api/voice/health：把 TTS 服务自己的 /health 透传给面板（活着吗、有哪些音色）。</summary>
+    private async Task HandleVoiceHealthAsync(HttpListenerContext context)
+    {
+        var voice = _agent.Voice;
+        if (voice is null)
+        {
+            await WriteJsonAsync(context, 503, new JsonObject { ["ok"] = false, ["error"] = "语音服务还没初始化" });
+            return;
+        }
+
+        var (ok, payload, error) = await voice.HealthAsync(CancellationToken.None);
+        await WriteJsonAsync(context, ok ? 200 : 502, new JsonObject
+        {
+            ["ok"] = ok,
+            ["url"] = voice.BaseUrl,
+            ["currentVoice"] = voice.VoiceName,
+            ["voices"] = payload?["voices"]?.DeepClone() ?? new JsonArray(),
+            ["default"] = payload?["default"]?.ToString(),
+            ["error"] = error
+        });
     }
 
     private static async Task<JsonNode?> ReadJsonAsync(HttpListenerContext context)

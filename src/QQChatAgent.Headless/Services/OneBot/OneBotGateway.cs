@@ -134,6 +134,36 @@ public sealed class OneBotGateway : IQqChatSource, IDisposable
     }
 
     /// <summary>
+    /// 发一条语音（OneBot record 段）。
+    ///
+    /// 这里只把 TTS 的 URL 塞进 record 段，**由 NapCat 自己下载 → 转 silk → 上传**：
+    ///   • 机器人不用实现 silk 编码（NapCat 内置 native 转换器，比我们可靠）；
+    ///   • 也不用把几百 KB 音频 base64 塞进 WebSocket。
+    /// 代价：NapCat 必须能访问这个 URL（同网段时就是 http://tts:5000）。
+    /// 失败时把上游原话打出来（retcode + 响应体）—— 这是判断"协议端不支持"还是
+    /// "地址不可达"的唯一依据；上层据此退化成发文字，绝不能什么都不发。
+    /// </summary>
+    public async Task<bool> SendVoiceAsync(bool isGroup, long targetId, string audioUrl, CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(audioUrl))
+        {
+            return false;
+        }
+
+        var action = isGroup ? "send_group_msg" : "send_private_msg";
+        var key = isGroup ? "group_id" : "user_id";
+        var record = $"{{\"type\":\"record\",\"data\":{{\"file\":{Json(audioUrl)}}}}}";
+        var result = await SendActionAsync(action, $"{{\"{key}\":{targetId},\"message\":[{record}]}}", ct);
+        var code = result is null ? -999 : GetRetcode(result);
+        if (code != 0)
+        {
+            Log($"record 段发送失败 retcode={code}（url={audioUrl}）：{result?.ToJsonString() ?? "(无响应，可能超时)"}");
+        }
+
+        return code == 0;
+    }
+
+    /// <summary>
     /// 发送一张图片（表情包）。
     /// 用 base64:// 而不是本地路径：机器人容器里的 /data/stickers 不在 NapCat 容器里，
     /// 而 base64 不依赖协议端的文件访问权限（NapCat 原生支持 base64://）。

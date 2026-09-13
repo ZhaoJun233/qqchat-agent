@@ -175,6 +175,12 @@ public static partial class Program
 
         openAi.ClearRequests();
         openAi.EnqueueReply("""{"suitability": 88, "reply": "我去听听。", "listen": "测试小夜曲 测试歌手"}""");
+        // 听完回来接话的那一轮：响应的内容必须真的发出来 ——
+        // 这一轮请求的上下文以“你自己刚说的话”结尾，部分上游（Gemini）会直接 400（Requests ending
+        // with a model turn are not supported）；只断言“请求发出去了”盖不住这个问题，
+        // 因为假上游会先把请求记下来、再回错误 —— 必须看回复有没有真发出来。
+        openAi.EnqueueReply("""{"suitability": 90, "reply": "副歌那两句我听着挺熟。"}""");
+        var listenMark = protocol.ActionsReceived.Count;
         await protocol.SendGroupMessageAsync(groupId, 30014, "群友B",
             "@10001 去听一下测试小夜曲", 9307, mentionBot: true, ct: cts.Token);
 
@@ -185,6 +191,13 @@ public static partial class Program
         Check("★ 听完后带着歌词与波形实测回来接话（而不是只回一句“我去听听”）",
             afterListen is not null && afterListen.Contains("测试歌词第一句"),
             afterListen is null ? "(没等到听完之后的回复)" : "已把实测数据交给模型");
+
+        await WaitUntilAsync(() => GroupSendsSince(protocol, listenMark).Any(a => MessageText(a).Contains("副歌")),
+            TimeSpan.FromSeconds(15));
+        var heardSends = GroupSendsSince(protocol, listenMark);
+        Check("★ 听完之后的这一轮真的发出了回复（上游拒绝 model-turn 结尾时这里会卡死）",
+            heardSends.Any(a => MessageText(a).Contains("副歌")),
+            $"本轮发出 {heardSends.Count} 条：{string.Join(" | ", heardSends.Select(MessageText))}");
 
         // ---- 5) 语境合适时，机器人自己分享一张网易云卡片 ----
         openAi.ClearRequests();
@@ -203,6 +216,18 @@ public static partial class Program
             musicCard is not null && musicCard.Contains("163") && musicCard.Contains("999001"),
             musicCard is null ? "(无)" : musicCard.Substring(Math.Max(0, musicCard.Length - 160)));
     }
+
+    /// <summary>取“从第 mark 条动作之后”的群消息（把“本步新发出的”与历史分开）。</summary>
+    private static List<JsonObject> GroupSendsSince(MockProtocol protocol, int mark)
+        => protocol.ActionsReceived.Skip(mark)
+            .Where(a => a["action"]?.GetValue<string>() == "send_group_msg")
+            .ToList();
+
+    /// <summary>取“从第 mark 条动作之后”的私聊消息。</summary>
+    private static List<JsonObject> PrivateSendsSince(MockProtocol protocol, int mark)
+        => protocol.ActionsReceived.Skip(mark)
+            .Where(a => a["action"]?.GetValue<string>() == "send_private_msg")
+            .ToList();
 
     /// <summary>等一条满足条件的模型请求（返回请求全文，超时返回 null）。</summary>
     private static async Task<string?> WaitForRequestAsync(MockOpenAi openAi, Func<string, bool> match, TimeSpan timeout)
@@ -225,14 +250,14 @@ public static partial class Program
         return null;
     }
 
-    /// <summary>等机器人发出至少 n 条群消息。</summary>
-    private static async Task<List<JsonObject>> WaitForSendsAsync(MockProtocol protocol, int count, TimeSpan timeout)
+    /// <summary>等机器人发出至少 n 条消息（默认群消息；私聊传 action="send_private_msg"）。</summary>
+    private static async Task<List<JsonObject>> WaitForSendsAsync(MockProtocol protocol, int count, TimeSpan timeout, string action = "send_group_msg")
     {
         var deadline = DateTimeOffset.Now + timeout;
         while (DateTimeOffset.Now < deadline)
         {
             var sends = protocol.ActionsReceived
-                .Where(a => a["action"]?.GetValue<string>() == "send_group_msg")
+                .Where(a => a["action"]?.GetValue<string>() == action)
                 .ToList();
             if (sends.Count >= count)
             {
@@ -243,7 +268,7 @@ public static partial class Program
         }
 
         return protocol.ActionsReceived
-            .Where(a => a["action"]?.GetValue<string>() == "send_group_msg")
+            .Where(a => a["action"]?.GetValue<string>() == action)
             .ToList();
     }
 

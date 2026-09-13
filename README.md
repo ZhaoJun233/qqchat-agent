@@ -33,6 +33,7 @@ docker compose logs -f napcat       # 首次扫码登录（或在机器人面板
 - **戳一戳**：被戳时按语境和人设回话，也能戳回去；别人互戳不插话（只进上下文），同一个人连着戳有冷却，能戳谁有校验（模型编的号不采信）
 - **当前心情**：心情 =「最近被戳次数（客观）+ 模型自己写一句（主观）」，会进提示词影响语气；被戳太频繁时代码直接拦下回戳；心情超过设定时长（默认 2 小时）没更新会自动过期回落
 - **表情包库（全库共用一份）**：群友发的图自动收进库（内容哈希去重）→ 模型生成「一句话说明 + 情绪/场景关键词」→ 回复时按语境检索候选让模型选图；入库先**审核**（聊天截图/广告/纯文字图不收），发送有**频率门**（同会话间隔、同张不重复），超上限按「用得少 + 最久没用」淘汰，机器人还会定期自巡检决定删哪些，也能从 QQ 收藏表情导入
+- **语音消息（可选）**：模型可以**偶尔**用声音说一句（JSON 里的 `speak` 字段）。合成走独立的 Piper 旁路容器（CPU 就能实时出音，中文音色 4 个可选）；机器人**只把 `/speak?text=…` 的 URL 交给协议端**，由 NapCat 自己下载并转 silk 上传 —— 不用碰音频编码，也不用把音频塞进 WebSocket。群里语音连发是刷屏，所以提示词让它克制、代码侧再加同会话 45 秒闸门；开关关了、超字数、TTS 挂了都一律退化成打字（内容不丢）
 
 **运维**
 
@@ -63,6 +64,7 @@ NapCat 容器 ── OneBot v11 正向 WS ──┐
 | QQ 通道 | [NapCat](https://github.com/NapNeko/NapCatQQ) → OneBot v11（正向/反向 WebSocket、HTTP 三种可选） |
 | AI 大脑 | OpenAI 兼容 Chat Completions（含多模态识图） |
 | 持久化 | `/data`：会话、人物档案、设置、`stickers/` 表情包库、日志（全部 JSON + 图片文件，易于备份） |
+| 语音合成 | 独立容器 [Piper](https://github.com/rhasspy/piper)（`tools/tts-server.py` 包一层 HTTP，约 490MB）——挂了只影响语音，机器人自动降级成打字 |
 | 健康检查 | 内置极简 HTTP 服务：`/healthz` `/readyz` `/status` |
 
 ## 📚 文档
@@ -82,7 +84,7 @@ dotnet build tests/QQChatAgent.IntegrationHarness -c Release
 dotnet tests/QQChatAgent.IntegrationHarness/bin/Release/net8.0/QQChatAgent.IntegrationHarness.dll
 ```
 
-覆盖 21 个场景（白名单/静默/分句/记忆/档案/设置热更新/掉线/扫码登录/表情包/引用/小表情与戳一戳/模型配置热改…），
+覆盖 24 个场景（白名单/静默/分句/记忆/档案/设置热更新/掉线/扫码登录/表情包/引用/小表情与戳一戳/模型配置热改/听音乐/链接与转发/语音…），
 另有面板静态与运行时探针（`tests/QQChatAgent.FrontendProbe`）。
 
 > 注意：测试工程没有引用机器人工程，**改完机器人代码要单独 build 它**，否则跑的还是旧 DLL。

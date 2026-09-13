@@ -121,6 +121,11 @@ secrets:
 | `QQCHAT_POKE_COOLDOWN` | `45` | 戳一戳冷却（秒）：同一个人连着戳只回一次；也是主动戳人的最小间隔 |
 | `QQCHAT_MOOD_TTL` | `7200` | 模型写的心情保留多久（秒）：超时没更新就回落到“按被戳次数自动描述”，0 = 不过期 |
 | `QQCHAT_ALLOW_PRIVATE_IMAGE_HOSTS` | `0` | `1` = 允许从内网/回环地址下载图片。**仅供自建/测试**，公网部署不要开 |
+| `QQCHAT_ENABLE_VOICE` | `0` | 语音消息总开关（模型填 `speak` 字段时才发）——需要先跑起 `tts` 旁路容器 |
+| `QQCHAT_VOICE` | `zh_CN-huayan-medium` | 音色（= `tts/<name>.onnx`）：`huayan-medium/x_low`、`xiao_ya-medium`、`chaowen-medium` |
+| `QQCHAT_VOICE_SPEED` | `100` | 语速百分比（100 = 原速，越大越快） |
+| `QQCHAT_VOICE_MAX_CHARS` | `80` | 单条语音字数上限（超过就不发语音，改打字） |
+| `QQCHAT_TTS_URL` | `http://tts:5000` | TTS 旁路服务地址（机器人拼 `/speak?text=…`，NapCat 去下载） |
 | `TZ` | `Asia/Shanghai` | 影响消息时间戳与模型看到的"现在几点" |
 
 > 面板内扫码登录为什么需要令牌：机器人是向 NapCat WebUI 的公开接口
@@ -274,6 +279,37 @@ docker inspect --format '{{.State.Health.Status}}' qqchat-bot
 
 > 两个容易踩的点：图片 URL 来自 QQ 事件，属不可信输入，下载默认拦回环/私有 IP（SSRF）；
 > 模型给的是“说明 + 关键词”而不是图片本身，候选必须是检索出来的几张，不能把整库塞进提示词。
+
+## 语音消息（可选：模型偶尔用声音说一句）
+
+```
+模型输出 JSON 里带 speak（要说出口的话；也可以是 true = 把 reply 用语音说）
+   └─→ 机器人拼出 http://tts:5000/speak?text=…&voice=…&speed=…
+         └─→ 发 OneBot record 段，data.file 就是这个 URL
+               └─→ NapCat 自己下载 → 转 silk（native 转换器）→ 上传成语音
+机器人这边：不下载音频、不碰 silk、不把音频塞进 WebSocket
+```
+
+为什么这么设计（都是踩过的坑）：
+
+- **音频编码交给协议端**：silk 是 QQ 私有格式，自己接编码器版本很容易对不上；
+  NapCat 内置了 native 转换器（`convertToNTSilkTct`），且它能直接吃 `http(s)://` / `base64://` / 本地路径。
+- **代价是网络可达**：NapCat 必须能访问这个 URL。两个容器同在 `qqchat-net` 时就是 `http://tts:5000`；
+  若把 NapCat 放到别的机器上，要用宿主机 IP / 域名，并且别把 `tts` 只绑在 `127.0.0.1`。
+- **语音要克制**：提示词反复要求“偶尔用”（道谢/撒娇/唱歌/情绪重的时候），
+  代码侧再加一道**同会话 45 秒**的闸门（`VoiceMinIntervalSeconds`）——
+  模型不听话也刷不了屏，而且 Piper 是 CPU 串行推理，一条要几秒。
+- **一律可降级**（任一环节失败都退化成打字，内容不丢）：开关关闭、超过 `VoiceMaxChars`、
+  频率门、`QQCHAT_TTS_URL` 没配、TTS 容器挂了、协议端 retcode≠0（如不支持 record 段）。
+- **落库记的是 `[语音] 说的内容`**：模型下一轮才知道“我刚才是用声音说的什么”，不会当自己没说过。
+
+面板「设置 → 语音消息」可以：开关、音色（datalist 给出 4 个中文音色）、语速、字数上限、TTS 地址，
+以及**试听一句**（真去 `/speak` 拿回 wav 在浏览器里播，音色/语速可以当场改当场听）和
+**检查 TTS 服务**（问对方 `/health`，列出可用音色）。对应接口：`POST /api/voice/test`、`GET /api/voice/health`。
+
+> 音色就是模型文件：换音色 = 往 `/opt/qqchat/tts/` 放一个 `<name>.onnx`（+ 同名 `.json`）。
+> 要复现**某个真人的嗓音**需要先把声音用在自己身上得到授权，再单独训练或调用云端克隆 API ——
+> 没授权的真人音色不要做。
 
 ## 与桌面版的差异
 

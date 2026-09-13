@@ -15,6 +15,9 @@ namespace QQChatAgent.IntegrationHarness;
 ///   S6  正向 WebSocket + 私聊链路 + 重启后会话/档案恢复
 ///   S7  健康检查端点 /healthz /readyz /status
 ///   S17 面板内扫码登录（向 NapCat WebUI 取二维码，不靠用户自己找入口）
+///   S22 听音乐（识别分享 → 歌词 → 波形分析 → 交给模型）
+///   S23 链接预览（群友发的链接真去打开取标题/摘要）
+///   S24 语音消息（模型 speak → record 段只给 URL → 面板试听/健康检查）
 /// 每个场景用独立进程与独立数据目录，互不干扰。
 /// </summary>
 public static partial class Program
@@ -88,6 +91,7 @@ public static partial class Program
             await Scenario("s21", RunModelConfigScenarioAsync);
         await Scenario("s22", RunMusicScenarioAsync);
         await Scenario("s23", RunLinksScenarioAsync);
+        await Scenario("s24", RunVoiceScenarioAsync);
         }
         catch (Exception ex)
         {
