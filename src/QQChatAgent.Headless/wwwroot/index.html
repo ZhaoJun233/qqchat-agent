@@ -149,7 +149,7 @@
           <div class="card-head">
             <h3>Agent 大脑 · OpenAI 兼容接口</h3>
             <p>这三项可以直接在这里改（保存后立即生效，不用重启容器）；留空 = 回退到容器环境变量。
-              <br />密钥存在 <code>data/secrets.json</code>（权限 600），不进 <code>settings.json</code>，界面上只显示掩码。</p>
+              <br />密钥单独存在 <code>data/qqchat.db</code> 的 <code>secrets</code> 表（库文件权限 600），不跟其余配置混在一起，界面上只显示掩码。</p>
           </div>
           <div class="field">
             <label>Base URL<span class="hint" id="baseUrlSrc"></span></label>
@@ -162,7 +162,7 @@
           </div>
           <div class="field">
             <label>模型名称<span class="hint" id="modelSrc"></span></label>
-            <input type="text" id="setModel" placeholder="gemini-3.8-flash-high" />
+            <input type="text" id="setModel" placeholder="网关支持的模型名" />
           </div>
 
           <div class="field">
@@ -395,8 +395,8 @@
           </div>
 
           <div class="field">
-            <label>音频识别模型<span class="hint">专门用来“听”的模型（留空 = 不听，只用波形实测）。实测 gemini-3.7-flash-high / gemini-3-flash 能听到声音，而主模型 gemini-3.8-flash-high 收不到音频</span></label>
-            <input type="text" id="setMusicUnderstandModel" maxlength="80" placeholder="gemini-3.7-flash-high" />
+            <label>音频识别模型<span class="hint">专门用来“听”的模型，可以和主模型不同（留空 = 不听，只用波形实测）；并不是所有模型都收得到音频，换之前在「当场试听一首」里验一下</span></label>
+            <input type="text" id="setMusicUnderstandModel" maxlength="80" placeholder="填支持音频输入的模型名" />
           </div>
 
           <label class="switch-row">
@@ -437,14 +437,9 @@
 
           <div class="grid-2">
             <div class="field">
-              <label>音色<span class="hint">Piper 模型名；中文现成音色见下方候选</span></label>
-              <input type="text" id="setVoiceName" list="voiceNameOptions" maxlength="60" placeholder="zh_CN-huayan-medium" />
-              <datalist id="voiceNameOptions">
-                <option value="zh_CN-huayan-medium">华研（女声·中质量，默认）</option>
-                <option value="zh_CN-huayan-x_low">华研（女声·低质量，更快）</option>
-                <option value="zh_CN-xiao_ya-medium">小雅（女声·中质量）</option>
-                <option value="zh_CN-chaowen-medium">朝文（男声·中质量）</option>
-              </datalist>
+              <label>音色<span class="hint">Piper 模型名；点开输入框会列出 TTS 服务上已装的音色</span></label>
+              <input type="text" id="setVoiceName" list="voiceNameOptions" maxlength="60" placeholder="TTS 服务上已安装的音色名" />
+              <datalist id="voiceNameOptions"></datalist>
             </div>
             <div class="field">
               <label>语速（%）<span class="hint">100 = 原速</span></label>
@@ -478,7 +473,7 @@
             <h3>联网搜索</h3>
             <p>模型可以要求<b>去网上查一下</b>（JSON 里填 <code>search</code> 字段）或<b>读一下某个网页</b>（<code>read</code> 字段），
               查到的东西会作为<b>事实</b>交给它，下一轮再拿着事实回答 —— 而不是靠印象编。
-              默认走<b>模型自带搜索</b>（网关背后的 Gemini + Google Search，结果自带来源）；它不可用时才回退到下面的搜索源。</p>
+              默认走<b>模型自带搜索</b>（检索在模型服务商那边完成，结果自带来源）；它不可用时才回退到下面的搜索源。</p>
           </div>
 
           <label class="switch-row">
@@ -516,8 +511,8 @@
           </div>
           <pre id="searchTestOut" class="path-hint" style="white-space:pre-wrap;max-height:220px;overflow:auto"></pre>
 
-          <p class="path-hint">为什么默认靠模型自带搜索：这台服务器是机房 IP —— Google/Bing/DuckDuckGo/百度 对爬虫一律回看板页或验证码（实测记录见交接文档）；
-            而模型订阅本来就能搜，不额外要密钥、不爬虫、结果还带来源。自建 SearxNG 可以把地址填到上面。</p>
+          <p class="path-hint">为什么默认靠模型自带搜索：机房 / 云服务器 IP 常被搜索引擎当爬虫挡掉（回看板页或验证码），
+            而模型服务商那边的检索不用额外密钥、不爬页面、结果还带来源。自建 SearxNG / MediaWiki 之类的接口可以把地址填到上面。</p>
         </div>
 
         <!-- 链接与分享 -->
@@ -682,7 +677,7 @@
       </div>
       <div class="field">
         <label>音频识别模型<span class="hint">专门用来“听”的模型</span></label>
-        <input type="text" id="audioModel" maxlength="80" placeholder="gemini-3.7-flash-high" />
+        <input type="text" id="audioModel" maxlength="80" placeholder="填支持音频输入的模型名" />
       </div>
     </div>
 

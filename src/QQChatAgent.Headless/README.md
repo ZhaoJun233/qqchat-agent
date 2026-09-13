@@ -127,7 +127,7 @@ secrets:
 | `QQCHAT_VOICE_MAX_CHARS` | `80` | 单条语音字数上限（超过就不发语音，改打字） |
 | `QQCHAT_TTS_URL` | `http://tts:5000` | TTS 旁路服务地址（机器人拼 `/speak?text=…`，NapCat 去下载） |
 | `QQCHAT_WEB_SEARCH` | `1` | 联网搜索总开关（模型填 `search` / `read` 时才用） |
-| `QQCHAT_SEARCH_USE_MODEL` | `1` | 优先用“模型自带搜索”（网关背后的 Gemini + `google_search`，带来源） |
+| `QQCHAT_SEARCH_USE_MODEL` | `1` | 优先用“模型自带搜索”（检索在服务商侧完成，结果带来源）；置 `0` 就只用下面的搜索源模板 |
 | `QQCHAT_SEARCH_SOURCES` | Wikipedia API | 兑底搜索源模板（每行 `name|url`，`{q}` 是查询词；`searx*`/`wiki*` 有专用解析） |
 | `QQCHAT_SEARCH_MAX_RESULTS` | `5` | 每次给模型看几条结果 |
 | `QQCHAT_SEARCH_TIMEOUT` | `20` | 搜索 / 读页面超时（秒） |

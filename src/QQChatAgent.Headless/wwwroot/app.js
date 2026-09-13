@@ -1425,7 +1425,7 @@
       list.replaceChildren(...all.map((v) => Object.assign(document.createElement("option"), { value: v })));
     }
 
-    // 点开音色输入框时顺手拉一次“服务端装了哪些音色”（失败就保留 HTML 里的静态候选）。
+    // 点开音色输入框时顺手拉一次“TTS 服务装了哪些音色”（失败就保持原样，不预置静态候选）。
     // 不放在 loadSettings 里：那里是“保存契约”的关键路径，不该加网络请求。
     $("setVoiceName").addEventListener("focus", async () => {
       try {
