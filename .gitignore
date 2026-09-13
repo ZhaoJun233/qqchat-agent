@@ -1,0 +1,27 @@
+# Build results
+bin/
+obj/
+*.user
+*.suo
+.vs/
+*.nupkg
+
+# IDE
+.idea/
+.vscode/
+
+# Local data
+*.log
+
+# 运行时（NapCat 二进制/日志/会话数据）不纳入版本库
+runtime/
+
+# 容器部署产物
+/data/
+napcat/
+.env
+.env.*
+!.env.example
+
+# 参考源码（vendor/NapCatQQ 等）不纳入仓库
+vendor/

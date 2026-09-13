@@ -1,0 +1,35 @@
+# 构建上下文裁剪：只让 Docker 看到构建真正需要的东西
+# （runtime/ 里有 NapCat 二进制和会话数据，绝不能进镜像）
+
+# 版本控制与 CI
+.git
+.gitignore
+.github
+*.md
+!src/QQChatAgent.Headless/README.md
+
+# 解决方案文件不参与镜像构建
+QQChatAgent.slnx
+
+# 运行时数据（NapCat / 日志 / 会话 / 人物档案）
+runtime/
+data/
+logs/
+
+# 本地构建产物
+**/bin/
+**/obj/
+**/*.user
+
+# 部署侧
+docker-compose*.yml
+.env
+.env.*
+!.env.example
+napcat/
+
+# 杂项
+*.log
+.idea/
+.vscode/
+.vs/

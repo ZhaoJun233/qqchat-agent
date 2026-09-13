@@ -1,0 +1,474 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="system">
+<head>
+<meta charset="utf-8" />
+<!-- viewport-fit=cover：iPhone 刘海/小横条下也能用满屏，配合 CSS 的 env(safe-area-inset-*) -->
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="theme-color" content="#f3f3f3" media="(prefers-color-scheme: light)" />
+<meta name="theme-color" content="#202020" media="(prefers-color-scheme: dark)" />
+<meta name="mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-title" content="QQ Chat Agent" />
+<title>QQ Chat Agent</title>
+<link rel="stylesheet" href="/app.css" />
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%230067c0'/><text y='23' x='16' text-anchor='middle' font-size='17' fill='white' font-family='Segoe UI Symbol'>&#xE8BD;</text></svg>" />
+</head>
+<body>
+
+<!-- ══════════ 标题栏（对应 WinUI AppTitleBar）══════════ -->
+<header class="titlebar">
+  <div class="brand">
+    <div class="brand-badge">
+      <svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true">
+        <path fill="currentColor" d="M2 2.5A1.5 1.5 0 0 1 3.5 1h9A1.5 1.5 0 0 1 14 2.5v7A1.5 1.5 0 0 1 12.5 11H6.3L3 13.7V11h-.5A1.5 1.5 0 0 1 2 9.5z"/>
+      </svg>
+    </div>
+    <div class="brand-text">
+      <div class="brand-title">QQ Chat Agent</div>
+      <div class="brand-sub" id="brandSub">Web 面板 · v0.3</div>
+    </div>
+  </div>
+  <div class="titlebar-right">
+    <span class="conn" id="connPill"><i class="dot" id="connDot"></i><span id="connText">连接中…</span></span>
+  </div>
+</header>
+
+<div class="shell">
+
+  <!-- ══════════ 左侧导航（对应 NavigationView LeftCompact）══════════ -->
+  <nav class="navrail">
+    <button class="navitem active" data-page="chat" title="聊天">
+      <svg viewBox="0 0 16 16" width="16" height="16"><path fill="currentColor" d="M2 2.5A1.5 1.5 0 0 1 3.5 1h9A1.5 1.5 0 0 1 14 2.5v7A1.5 1.5 0 0 1 12.5 11H6.3L3 13.7V11h-.5A1.5 1.5 0 0 1 2 9.5z"/></svg>
+      <span>聊天</span>
+    </button>
+    <button class="navitem" data-page="settings" title="设置">
+      <svg viewBox="0 0 16 16" width="16" height="16"><path fill="currentColor" d="M8 5.2A2.8 2.8 0 1 0 8 10.8 2.8 2.8 0 0 0 8 5.2m0 1.4a1.4 1.4 0 1 1 0 2.8 1.4 1.4 0 0 1 0-2.8"/><path fill="currentColor" d="m13.3 9.3-.9.5a4.5 4.5 0 0 1 0 1.4l.9.5a.6.6 0 0 1 .2.8l-.8 1.4a.6.6 0 0 1-.8.2l-.9-.5c-.4.3-.8.6-1.2.7v1a.6.6 0 0 1-.6.6H7.5a.6.6 0 0 1-.6-.6v-1a4.5 4.5 0 0 1-1.2-.7l-.9.5a.6.6 0 0 1-.8-.2l-.8-1.4a.6.6 0 0 1 .2-.8l.9-.5a4.5 4.5 0 0 1 0-1.4l-.9-.5a.6.6 0 0 1-.2-.8l.8-1.4a.6.6 0 0 1 .8-.2l.9.5c.4-.3.8-.6 1.2-.7v-1a.6.6 0 0 1 .6-.6h1.6a.6.6 0 0 1 .6.6v1c.4.1.8.4 1.2.7l.9-.5a.6.6 0 0 1 .8.2l.8 1.4a.6.6 0 0 1-.2.8"/></svg>
+      <span>设置</span>
+    </button>
+  </nav>
+
+  <!-- ══════════════════ 聊天页 ══════════════════ -->
+  <main class="page" id="pageChat">
+
+    <!-- 会话列表 -->
+    <section class="conv-pane">
+      <div class="conv-head">
+        <h1>会话</h1>
+        <button class="ai-toggle" id="aiToggle" title="AI 模式：开启后 Agent 自动调用模型回复消息列表里的会话">
+          <span class="ai-ico" id="aiIco"></span>
+          <span id="aiLabel">AI 开</span>
+        </button>
+      </div>
+
+      <div class="search-wrap">
+        <input type="search" id="search" placeholder="搜索会话" autocomplete="off" />
+      </div>
+
+      <div class="conv-list" id="convList"></div>
+      <div class="conv-empty" id="convEmpty">
+        <p>暂无会话</p>
+        <p class="sub">群内 @ 机器人、好友私聊消息会自动出现在这里</p>
+      </div>
+    </section>
+
+    <div class="vdivider"></div>
+
+    <!-- 聊天区 -->
+    <section class="chat-pane">
+      <div class="chat-head" id="chatHead">
+        <!-- 手机端：从聊天返回会话列表（桌面端隐藏） -->
+        <button class="chat-back" id="chatBack" title="返回会话列表" aria-label="返回会话列表">
+          <svg viewBox="0 0 16 16" width="16" height="16"><path fill="currentColor" d="M10.3 2.3a1 1 0 0 1 0 1.4L5.9 8l4.4 4.3a1 1 0 1 1-1.4 1.4l-5-5a1 1 0 0 1 0-1.4l5-5a1 1 0 0 1 1.4 0"/></svg>
+        </button>
+        <div class="avatar av-38" id="hdrAvatar"><span id="hdrAvatarText">?</span></div>
+        <div class="chat-head-main">
+          <div class="chat-head-line">
+            <h2 id="hdrName">未选择会话</h2>
+            <span class="kind-tag" id="hdrKindTag" hidden>群聊</span>
+          </div>
+          <div class="meta" id="hdrMeta">从左侧选择一个会话</div>
+        </div>
+        <div class="chat-head-status">
+          <i class="dot" id="hdrDot"></i>
+          <span id="hdrStatus">离线 · 未登录</span>
+        </div>
+      </div>
+
+      <!-- ══ 扫码登录卡片：QQ 未登录时自动出现，登录成功后自动消失 ══
+           二维码直接显示在面板里 —— 以前只能去 NapCat 自己的 WebUI（另一个域名 + 另一道认证）才看得到，
+           用户打开机器人面板看不到二维码就会卡在「没登录」上。 -->
+      <div class="login-card" id="loginCard" hidden>
+        <div class="login-qr">
+          <img id="loginQrImg" alt="QQ 登录二维码" hidden />
+          <div class="login-qr-state" id="loginQrState">正在获取二维码…</div>
+        </div>
+        <div class="login-body">
+          <h3 id="loginTitle">QQ 未登录 · 扫码即可上线</h3>
+          <p class="login-msg" id="loginMsg">用手机 QQ 扫左侧二维码登录机器人账号。二维码会自动换新，登录成功后本卡片自动消失。</p>
+          <div class="login-actions">
+            <button class="accent-btn" id="loginRefresh">换一张二维码</button>
+            <button class="ghost-btn" id="loginCollapse">收起</button>
+          </div>
+          <p class="login-url" id="loginUrlRow" hidden>扫不动？把这条链接粘到任意二维码生成器里再扫：<code id="loginUrl"></code></p>
+        </div>
+      </div>
+
+      <div class="msg-scroll" id="msgScroll">
+        <div class="msg-list" id="msgList"></div>
+        <div class="chat-empty" id="chatEmpty">
+          <p>暂无消息</p>
+          <p class="sub">群内 @ 机器人、好友私聊消息会自动出现在这里；<br />群会话打开时自动补历史消息</p>
+        </div>
+      </div>
+
+      <div class="thinking" id="thinking" hidden>
+        <i class="dot"></i><span id="thinkingText">AI 正在思考…</span>
+      </div>
+
+      <div class="composer">
+        <textarea id="input" rows="1" placeholder="输入消息，Enter 发送（Shift+Enter 换行）"></textarea>
+        <button class="accent-btn" id="sendBtn">
+          <svg viewBox="0 0 16 16" width="13" height="13"><path fill="currentColor" d="M1.7 14.3 15 8 1.7 1.7l.9 5.1 8.1 1.2-8.1 1.2z"/></svg>
+          <span>发送</span>
+        </button>
+      </div>
+    </section>
+  </main>
+
+  <!-- ══════════════════ 设置页 ══════════════════ -->
+  <main class="page page-column" id="pageSettings" hidden>
+    <div class="settings-scroll">
+      <div class="settings-inner">
+        <h1 class="page-title">设置</h1>
+        <p class="page-desc">
+          密钥与通道地址由容器环境变量提供（下方只读）；<b>人设、白名单、节奏等归本页所有</b>，保存后立即生效且重启不回滚。
+        </p>
+
+        <!-- Agent 大脑 -->
+        <div class="card">
+          <div class="card-head">
+            <h3>Agent 大脑 · OpenAI 兼容接口</h3>
+            <p>这三项可以直接在这里改（保存后立即生效，不用重启容器）；留空 = 回退到容器环境变量。
+              <br />密钥存在 <code>data/secrets.json</code>（权限 600），不进 <code>settings.json</code>，界面上只显示掩码。</p>
+          </div>
+          <div class="field">
+            <label>Base URL<span class="hint" id="baseUrlSrc"></span></label>
+            <input type="text" id="setBaseUrl" placeholder="http://llm-gateway:8080/v1" />
+          </div>
+          <div class="field">
+            <label>API Key<span class="hint" id="apiKeySrc"></span></label>
+            <input type="password" id="setApiKey" placeholder="填新密钥；留空 = 不改（清除请点右侧按钮）" autocomplete="new-password" />
+            <button class="ghost-btn inline" id="clearApiKey" type="button">清除密钥</button>
+          </div>
+          <div class="field">
+            <label>模型名称<span class="hint" id="modelSrc"></span></label>
+            <input type="text" id="setModel" placeholder="gemini-3.8-flash-high" />
+          </div>
+
+          <div class="field">
+            <label>单次回复字数上限<span class="hint">MaxTokens</span></label>
+            <input type="number" id="setMaxTokens" min="64" max="32000" step="64" />
+          </div>
+
+          <div class="field">
+            <label>机器人人设档案<span class="hint">可选，定义角色的性格 / 说话风格，随每次请求注入</span></label>
+            <textarea id="setPersona" rows="4" placeholder="例如：你是群里的老群友，说话简短、口语化，偶尔吐槽……"></textarea>
+          </div>
+
+          <div class="field">
+            <label>AI 对话欲望<span class="hint">越高越主动参与群聊发言</span><b class="val" id="desireVal">50</b></label>
+            <input type="range" id="setDesire" min="0" max="100" step="5" />
+          </div>
+
+          <div class="field">
+            <label>发言适合度阈值<span class="hint">模型评分低于此值则保持沉默</span><b class="val" id="threshVal">10</b></label>
+            <input type="range" id="setThreshold" min="0" max="60" step="5" />
+          </div>
+
+          <label class="switch-row">
+            <input type="checkbox" id="setAiMode" />
+            <span class="switch"></span>
+            <span>AI 自动回复开关</span>
+          </label>
+        </div>
+
+        <!-- QQ 接入 -->
+        <div class="card">
+          <div class="card-head">
+            <h3>QQ 接入 · OneBot v11</h3>
+            <p>连接信息由容器环境变量提供；白名单归本页所有，保存即生效。</p>
+          </div>
+
+          <div class="status-bar" id="napcatBar">
+            <div class="status-bar-title" id="napcatTitle">检测中…</div>
+            <div class="status-bar-msg" id="napcatMsg"></div>
+            <button class="ghost-btn inline" id="napcatLoginBtn" hidden>在面板里扫码登录</button>
+          </div>
+
+          <div class="field">
+            <label>协议</label>
+            <input type="text" id="setProtocol" readonly />
+          </div>
+          <div class="field">
+            <label>协议端地址</label>
+            <input type="text" id="setAddress" readonly />
+          </div>
+          <div class="field">
+            <label>AccessToken</label>
+            <input type="text" id="setToken" readonly />
+          </div>
+          <div class="field">
+            <label>机器人 QQ 号</label>
+            <input type="text" id="setUin" readonly />
+          </div>
+
+          <div class="field">
+            <label>消息白名单<span class="hint">严格模式：只有名单内的群 / 私聊会进入消息列表并触发 AI，名单外全部忽略。<code>*</code> = 全部接收（危险）</span></label>
+            <textarea id="setWhitelist" rows="4" placeholder="例如：&#10;20005&#10;20002&#10;（留空 = 全部忽略）"></textarea>
+          </div>
+        </div>
+
+        <!-- 回复节奏 -->
+        <div class="card">
+          <div class="card-head">
+            <h3>回复节奏</h3>
+            <p>防止刷屏、控制发言手感。</p>
+          </div>
+          <div class="grid-2">
+            <div class="field">
+              <label>群聊冷却（秒）</label>
+              <input type="number" id="setGroupCooldown" min="0" max="600" step="1" />
+            </div>
+            <div class="field">
+              <label>私聊冷却（秒）</label>
+              <input type="number" id="setPrivateCooldown" min="0" max="600" step="1" />
+            </div>
+            <div class="field">
+              <label>静默兜底（秒）<span class="hint">0 = 关闭</span></label>
+              <input type="number" id="setIdleFallback" min="0" max="3600" step="10" />
+            </div>
+            <div class="field">
+              <label>分句间隔（毫秒）</label>
+              <input type="number" id="setSegmentDelay" min="0" max="10000" step="50" />
+            </div>
+            <div class="field">
+              <label>最大上下文（条）<span class="hint">喂给模型的消息数</span></label>
+              <input type="number" id="setMaxContext" min="10" max="1000" step="10" />
+            </div>
+            <div class="field">
+              <label>会话保留条数<span class="hint">超出部分归档到 archive/*.jsonl</span></label>
+              <input type="number" id="setMaxMessages" min="20" max="100000" step="50" />
+            </div>
+            <div class="field">
+              <label>模型并发上限<span class="hint">会话内串行、跨会话并发</span></label>
+              <input type="number" id="setConcurrency" min="1" max="16" step="1" />
+            </div>
+            <div class="field">
+              <label>档案人数上限</label>
+              <input type="number" id="setProfileLookup" min="0" max="50" step="1" />
+            </div>
+            <div class="field">
+              <label>每人档案条数<span class="hint">只取上下文之外更早的历史</span></label>
+              <input type="number" id="setProfileLines" min="0" max="50" step="1" />
+            </div>
+            <div class="field">
+              <label>档案总字数预算<span class="hint">超出就丢掉发言更早的人</span></label>
+              <input type="number" id="setProfileChars" min="0" max="20000" step="100" />
+            </div>
+          </div>
+
+          <div class="card-head" style="margin-top:6px">
+            <h3 style="font-size:15px">长期记忆 · 人物画像</h3>
+            <p>定期用模型把堆积的历史发言压缩成一段画像（代替“一堆原文”），token 降一个数量级。</p>
+          </div>
+          <label class="switch-row">
+            <input type="checkbox" id="setEnableSummary" />
+            <span class="switch"></span>
+            <span>启用画像摘要</span>
+          </label>
+          <div class="grid-2">
+            <div class="field">
+              <label>触发阈值（条）<span class="hint">累计多少条新发言后重做</span></label>
+              <input type="number" id="setSummaryThreshold" min="5" max="500" step="5" />
+            </div>
+            <div class="field">
+              <label>画像字数上限</label>
+              <input type="number" id="setSummaryChars" min="40" max="2000" step="20" />
+            </div>
+            <div class="field">
+              <label>巡检间隔（秒）<span class="hint">0 = 关闭</span></label>
+              <input type="number" id="setSummaryInterval" min="0" max="86400" step="30" />
+            </div>
+          </div>
+          <label class="switch-row">
+            <input type="checkbox" id="setSplitReplies" />
+            <span class="switch"></span>
+            <span>长回复按句分句发送（更像真人打字）</span>
+          </label>
+        </div>
+
+        <!-- 表情包 -->
+        <div class="card">
+          <div class="card-head">
+            <h3>表情包</h3>
+            <p>机器人会自动把群友发的图收进表情包库，按下文语境挑图发出来；也会自己巡检并决定删哪些。
+              <b>全库共用一份</b>（不分会话）。</p>
+          </div>
+
+          <label class="switch-row">
+            <input type="checkbox" id="setEnableStickers" />
+            <span class="switch"></span>
+            <span>启用表情包（自动收集 + 按语境发送 + 自巡检）</span>
+          </label>
+
+          <div class="grid-2">
+            <div class="field">
+              <label>存储上限（张）<span class="hint">超出按“用得少 + 最久没用”淘汰</span></label>
+              <input type="number" id="setStickerMax" min="0" max="2000" step="10" />
+            </div>
+            <div class="field">
+              <label>每次候选张数<span class="hint">按语境挑给模型选，不是全库</span></label>
+              <input type="number" id="setStickerCandidates" min="0" max="20" step="1" />
+            </div>
+            <div class="field">
+              <label>自巡检间隔（秒）<span class="hint">机器人自己看一遍库决定删哪些，0 = 关</span></label>
+              <input type="number" id="setStickerCurate" min="0" max="86400" step="300" />
+            </div>
+            <div class="field">
+              <label>发送冷却（秒）<span class="hint">同一会话两次发表情包的最小间隔；同一张 10 分钟内不重复</span></label>
+              <input type="number" id="setStickerCooldown" min="0" max="86400" step="30" />
+            </div>
+          </div>
+
+          <div class="sticker-actions">
+            <button class="ghost-btn" id="openStickerLib">查看表情包库</button>
+            <button class="ghost-btn" id="stickerCurateNow">立即巡检</button>
+            <button class="ghost-btn" id="stickerImportAlbum">从 QQ 收藏表情导入</button>
+            <span class="path-hint" id="stickerHint"></span>
+          </div>
+        </div>
+
+        <!-- 戳一戳 -->
+        <div class="card">
+          <div class="card-head">
+            <h3>戳一戳</h3>
+            <p>别人戳机器人时，它按语境和人设回一句，也可以戳回去 / 戳别人；
+              <b>群里互相戳不会插话</b>（只记进上下文，免得刷屏）。</p>
+          </div>
+
+          <label class="switch-row">
+            <input type="checkbox" id="setEnablePoke" />
+            <span class="switch"></span>
+            <span>启用戳一戳（被戳时回应，可戳回去）</span>
+          </label>
+
+          <div class="grid-2">
+            <div class="field">
+              <label>冷却（秒）<span class="hint">同一个人连着戳只回一次；也是主动戳人的最小间隔</span></label>
+              <input type="number" id="setPokeCooldown" min="0" max="86400" step="15" />
+            </div>
+            <div class="field">
+              <label>当前心情<span class="hint">机器人自己写（回复里的 mood 字段），也可以手改；留空 = 按被戳次数自动描述</span></label>
+              <input type="text" id="setMood" maxlength="24" placeholder="例如：被戳烦了" />
+            </div>
+            <div class="field">
+              <label>心情保留（秒）<span class="hint">模型写的心情超过这么久没更新就自动回落为“按被戳次数描述”，0 = 不过期</span></label>
+              <input type="number" id="setMoodTtl" min="0" max="604800" step="600" />
+            </div>
+          </div>
+          <p class="path-hint" id="moodHint"></p>
+        </div>
+
+        <!-- 外观 -->
+        <div class="card">
+          <div class="card-head">
+            <h3>外观</h3>
+            <p>主题跟随系统，也可以手动指定。</p>
+          </div>
+          <div class="field">
+            <label>应用主题</label>
+            <select id="setTheme">
+              <option value="system">跟随系统</option>
+              <option value="light">浅色</option>
+              <option value="dark">深色</option>
+            </select>
+          </div>
+        </div>
+
+        <!-- 运行日志 -->
+        <div class="card log-card">
+          <div class="card-head">
+            <h3>运行日志<span class="hint">最近 200 条 Agent 决策记录</span></h3>
+            <p>能看到它每次为什么发言、为什么沉默、耗时多久。</p>
+          </div>
+          <div class="logbox" id="logBox"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 常驻操作栏：不随内容滚动，保证任何时候都看得到保存按钮 -->
+    <div class="settings-footer">
+      <div class="infobar" id="saveBar" hidden>
+        <svg viewBox="0 0 16 16" width="15" height="15"><path fill="currentColor" d="M8 0a8 8 0 1 0 0 16A8 8 0 0 0 8 0m3.5 6.1-4.2 4.2a.7.7 0 0 1-1 0L4.5 8.5a.7.7 0 1 1 1-1l1.3 1.3L9.9 5a.7.7 0 1 1 1 1"/></svg>
+        <span id="saveBarText">设置已保存并立即生效</span>
+      </div>
+      <div class="settings-actions">
+        <button class="accent-btn big" id="saveBtn">保存设置</button>
+        <span class="dirty-hint" id="dirtyHint" hidden>● 有未保存的修改</span>
+        <span class="path-hint" id="settingsPath"></span>
+      </div>
+    </div>
+  </main>
+</div>
+
+<!-- 会话右键菜单（对应 WinUI MenuFlyout） -->
+<div class="ctxmenu" id="ctxMenu" hidden>
+  <button data-act="read">标为已读</button>
+  <button data-act="profile">查看成员档案</button>
+  <button data-act="archive">查看归档历史</button>
+  <button data-act="delete" class="danger">删除会话</button>
+</div>
+
+<!-- 成员档案 / 归档历史弹层 -->
+<div class="modal" id="profileModal" hidden>
+  <div class="modal-card">
+    <div class="modal-head">
+      <h3 id="profileTitle">成员档案</h3>
+      <button id="profileClose">✕</button>
+    </div>
+    <pre class="profile-body" id="profileBody"></pre>
+  </div>
+</div>
+
+<div class="modal" id="stickerModal" hidden>
+  <div class="modal-card">
+    <div class="modal-head">
+      <h3 id="stickerTitle">表情包库</h3>
+      <button id="stickerClose">✕</button>
+    </div>
+    <div class="sticker-toolbar">
+      <span class="sticker-stat" id="stickerStat">加载中…</span>
+      <button class="ghost-btn small" id="stickerCurate">立即巡检</button>
+      <button class="ghost-btn small" id="stickerImport">导入收藏表情</button>
+    </div>
+    <div class="sticker-grid" id="stickerGrid"></div>
+  </div>
+</div>
+
+<div class="toast" id="toast" hidden></div>
+
+<!-- ══════════ 手机端底部导航（桌面端隐藏）══════════ -->
+<nav class="mtabbar" id="mTabbar">
+  <button class="mtab active" data-page="chat">
+    <svg viewBox="0 0 16 16" width="18" height="18"><path fill="currentColor" d="M2 2.5A1.5 1.5 0 0 1 3.5 1h9A1.5 1.5 0 0 1 14 2.5v7A1.5 1.5 0 0 1 12.5 11H6.3L3 13.7V11h-.5A1.5 1.5 0 0 1 2 9.5z"/></svg>
+    <span>会话</span>
+  </button>
+  <button class="mtab" data-page="settings">
+    <svg viewBox="0 0 16 16" width="18" height="18"><path fill="currentColor" d="M8 5.2A2.8 2.8 0 1 0 8 10.8 2.8 2.8 0 0 0 8 5.2m0 1.4a1.4 1.4 0 1 1 0 2.8 1.4 1.4 0 0 1 0-2.8"/><path fill="currentColor" d="m13.3 9.3-.9.5a4.5 4.5 0 0 1 0 1.4l.9.5a.6.6 0 0 1 .2.8l-.8 1.4a.6.6 0 0 1-.8.2l-.9-.5c-.4.3-.8.6-1.2.7v1a.6.6 0 0 1-.6.6H7.5a.6.6 0 0 1-.6-.6v-1a4.5 4.5 0 0 1-1.2-.7l-.9.5a.6.6 0 0 1-.8-.2l-.8-1.4a.6.6 0 0 1 .2-.8l.9-.5a4.5 4.5 0 0 1 0-1.4l-.9-.5a.6.6 0 0 1-.2-.8l.8-1.4a.6.6 0 0 1 .8-.2l.9.5c.4-.3.8-.6 1.2-.7v-1a.6.6 0 0 1 .6-.6h1.6a.6.6 0 0 1 .6.6v1c.4.1.8.4 1.2.7l.9-.5a.6.6 0 0 1 .8.2l.8 1.4a.6.6 0 0 1-.2.8"/></svg>
+    <span>设置</span>
+  </button>
+</nav>
+
+<script src="/app.js"></script>
+</body>
+</html>

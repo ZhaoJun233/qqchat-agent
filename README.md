@@ -1,0 +1,95 @@
+# QQ Chat Agent
+
+**无界面、跨平台的 QQ 聊天机器人常驻服务**：通过 [NapCat](https://github.com/NapNeko/NapCatQQ) 挂接官方 QQ 客户端（OneBot v11），
+由 OpenAI 兼容模型（DeepSeek / OpenAI / 通义 / Ollama / 自建中转…）自动回复私聊与群聊，自带 Web 面板。
+
+![.NET](https://img.shields.io/badge/.NET-8.0-blue) ![Platform](https://img.shields.io/badge/Platform-Docker%20%7C%20Linux-green) ![License](https://img.shields.io/badge/License-MIT-orange)
+
+```bash
+cp .env.example .env && vim .env    # 填 MODEL_API_KEY 与 WHITELIST
+docker compose up -d                # 起 napcat + 机器人
+docker compose logs -f napcat       # 首次扫码登录（或在机器人面板里扫）
+```
+
+打开 `http://<主机>:8080/` 就是控制面板：聊天记录、会话管理、设置、实时日志。
+
+## ✨ 功能
+
+**对话**
+
+- **AI 自动回复**：模型按「发言适合度」自主决定是否发言（低于阈值沉默）；支持「发言即请求」与「静默兜底」两种触发，请求队列按会话串行，多会话并行
+- **人物档案**：按 QQ 号给每位发言者建档案（近期发言 + 长期画像），称呼、语气、梗都能对上人
+- **识图回复**：群友发图时下载转 base64 交给多模态模型看图回答
+- **QQ「回复」引用**：回复哪一条由模型自己指认（提示词里带上近期消息编号），没有触发消息时不引用 —— 不会挂错人
+- **分句节奏**：长回复按句末标点分句、按打字速度分批发送，更像真人打字
+- **噪声守卫**：上游偶发只回一个字、或模型复读自己上一句时，代码侧直接拦下，不在群里刷屏
+
+**QQ 原生互动**
+
+- **原生小表情识别**：`[表情:微笑]`、`[表情:抠脸]` —— 名字表从协议端自己的 `face_config.json` 生成（`tools/gen_face_catalog.py`，覆盖经典与新版表情），另有动画/超级表情、骰子、猜拳
+- **戳一戳**：被戳时按语境和人设回话，也能戳回去；别人互戳不插话（只进上下文），同一个人连着戳有冷却，能戳谁有校验（模型编的号不采信）
+- **当前心情**：心情 =「最近被戳次数（客观）+ 模型自己写一句（主观）」，会进提示词影响语气；被戳太频繁时代码直接拦下回戳；心情超过设定时长（默认 2 小时）没更新会自动过期回落
+- **表情包库（全库共用一份）**：群友发的图自动收进库（内容哈希去重）→ 模型生成「一句话说明 + 情绪/场景关键词」→ 回复时按语境检索候选让模型选图；入库先**审核**（聊天截图/广告/纯文字图不收），发送有**频率门**（同会话间隔、同张不重复），超上限按「用得少 + 最久没用」淘汰，机器人还会定期自巡检决定删哪些，也能从 QQ 收藏表情导入
+
+**运维**
+
+- **Web 面板**：聊天记录与会话管理、设置、实时日志、手机端适配；**面板内扫码登录**（账号未登录时直接显示二维码，不必再找 NapCat 自己的入口）
+- **模型接口面板可改**：Base URL / 模型名 / API Key 在设置页改完立即生效，不用改 `.env` 重启；密钥单独存 `data/secrets.json`（权限 600），不进 `settings.json`，界面只回显掩码
+- **可观测**：`/healthz` `/readyz` `/status` + 容器 `HEALTHCHECK`；QQ 掉线会主动提示（仅凭 WebSocket 连着判断不了登录失效）
+- **配置分层**：环境变量负责部署（协议端地址、token、挂载目录），`settings.json` 负责行为（人设、白名单、冷却、阈值…），面板是行为的唯一所有者
+
+## 🏗️ 架构
+
+```
+QQ 客户端 (QQNT，容器里跑官方 Linux 版)
+   ▲ 注入
+NapCat 容器 ── OneBot v11 正向 WS ──┐
+                                    ▼
+                      本服务（QQChatAgent.Headless）
+                       ├── OneBot 网关（消息/动作/事件）
+                       ├── Agent（提示词组装、模型调用、发言决策）
+                       ├── 人物档案 / 会话持久化（JSON）
+                       └── Web 面板 + 健康检查（极简 HttpListener，不引入 ASP.NET）
+                                    │
+                                    ▼
+                       OpenAI 兼容 API（DeepSeek / 通义 / 自建中转…）
+```
+
+| 模块 | 方案 |
+| --- | --- |
+| QQ 通道 | [NapCat](https://github.com/NapNeko/NapCatQQ) → OneBot v11（正向/反向 WebSocket、HTTP 三种可选） |
+| AI 大脑 | OpenAI 兼容 Chat Completions（含多模态识图） |
+| 持久化 | `/data`：会话、人物档案、设置、`stickers/` 表情包库、日志（全部 JSON + 图片文件，易于备份） |
+| 健康检查 | 内置极简 HTTP 服务：`/healthz` `/readyz` `/status` |
+
+## 📚 文档
+
+| 文档 | 内容 |
+| --- | --- |
+| [src/QQChatAgent.Headless/README.md](src/QQChatAgent.Headless/README.md) | **部署与运维**：环境变量清单、数据目录、面板使用、故障排查、与上游桌面版的差异 |
+| [.env.example](.env.example) | 全部可配置项与说明（含 Docker secrets 用法） |
+
+## 🧪 测试
+
+仓库带一套**真实端到端**集成测试（起真实机器人进程 + 真 WebSocket 假协议端 + 真 HTTP 假模型）：
+
+```bash
+dotnet build src/QQChatAgent.Headless -c Release
+dotnet build tests/QQChatAgent.IntegrationHarness -c Release
+dotnet tests/QQChatAgent.IntegrationHarness/bin/Release/net8.0/QQChatAgent.IntegrationHarness.dll
+```
+
+覆盖 21 个场景（白名单/静默/分句/记忆/档案/设置热更新/掉线/扫码登录/表情包/引用/小表情与戳一戳/模型配置热改…），
+另有面板静态与运行时探针（`tests/QQChatAgent.FrontendProbe`）。
+
+> 注意：测试工程没有引用机器人工程，**改完机器人代码要单独 build 它**，否则跑的还是旧 DLL。
+
+## 🙏 来源与致谢
+
+- 本项目的容器版是在上游桌面版 [ftl-is-king/QQchat](https://github.com/ftl-is-king/QQchat)（WinUI 3 / .NET 8，作者 [@ftl-is-king](https://github.com/ftl-is-king)）的 Agent 逻辑基础上重写为无界面服务的：
+  保留了它的会话/档案/提示词思路，替换了宿主、传输编排与持久化，并补上了表情包、戳一戳、心情、面板等能力。
+- [NapCat](https://github.com/NapNeko/NapCatQQ)（QQ 协议桥接，遵循其自有《Limited Redistribution License》，非商业）、OneBot v11 协议、.NET 8。
+
+## 📄 License
+
+本程序源码 MIT。NapCat 本体遵循其自有许可证（非商业），请在使用时遵守。

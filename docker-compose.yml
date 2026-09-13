@@ -1,0 +1,139 @@
+# ══════════════════════════════════════════════════════════════
+#  QQ Chat Agent（Headless）+ NapCat 全容器部署
+#
+#  用法：
+#    cp .env.example .env      # 填写 API Key / 白名单 / QQ 号
+#    docker compose up -d
+#    docker compose logs -f napcat      # 首次登录看二维码
+#
+#  首次登录（一次性）：
+#    1) docker compose logs napcat   →  用手机 QQ 扫日志里的二维码
+#    2) 浏览器打开 http://<主机IP>:6099 →  WebUI 里开启「正向 WS」
+#       端口 3001，Token 与 .env 的 ONEBOT_TOKEN 一致
+#    3) docker compose restart qqchat   →  readyz 变 200
+#
+#  或者用反向 WS（不用登 WebUI 开端口，见文件底部的说明）
+# ══════════════════════════════════════════════════════════════
+
+services:
+  # ─────────── QQ 协议端（Linux QQ + NapCat） ───────────
+  napcat:
+    image: mlikiowa/napcat-docker:latest
+    container_name: qqchat-napcat
+    restart: unless-stopped
+    environment:
+      # 容器内 Linux QQ 的运行用户，需与挂载目录属主一致
+      - NAPCAT_UID=${NAPCAT_UID:-1000}
+      - NAPCAT_GID=${NAPCAT_GID:-1000}
+      - TZ=${TZ:-Asia/Shanghai}
+      # 快速登录：带上 QQ 号后，重启容器会复用 ./napcat/ntqq 里的登录态，无需重新扫码。
+      # ⚠ 这两行（TZ / ACCOUNT）很容易在“把仓库版 compose 覆盖到部署目录”时被弄丢，
+      #   丢了之后 ACCOUNT 为空 → NapCat 只能出二维码 → 需要人工重新扫码。
+      - ACCOUNT=${BOT_UIN:-}
+    ports:
+      # OneBot 正向 WS：机器人（qqchat 容器）通过内部网络访问，无需对宿主机暴露
+      - "127.0.0.1:3001:3001"
+      # WebUI 管理面板：仅本机可访问。要用手机/外网扫码请改成 "6099:6099"
+      - "127.0.0.1:6099:6099"
+    volumes:
+      - ./napcat/config:/app/napcat/config          # NapCat / OneBot 配置
+      - ./napcat/ntqq:/app/.config/QQ               # 登录态（重启免扫码）
+    networks:
+      - qqchat
+
+  # ─────────── AI 机器人 ───────────
+  qqchat:
+    build:
+      context: .
+      dockerfile: src/QQChatAgent.Headless/Dockerfile
+    image: qqchat-agent:latest
+    container_name: qqchat-bot
+    restart: unless-stopped
+    depends_on:
+      - napcat
+    environment:
+      # ---- 模型（OpenAI 兼容：DeepSeek / OpenAI / 通义 / 本地 Ollama 等）----
+      QQCHAT_BASE_URL: ${MODEL_BASE_URL:-https://api.openai.com/v1}
+      QQCHAT_API_KEY: ${MODEL_API_KEY:?请在 .env 里填 MODEL_API_KEY}
+      QQCHAT_MODEL: ${MODEL_NAME:-gpt-4o-mini}
+      QQCHAT_MAX_TOKENS: ${MAX_TOKENS:-2048}
+
+      # ---- QQ 通道：正向 WS 连到 napcat 容器 ----
+      QQCHAT_ONEBOT_PROTOCOL: ForwardWebSocket
+      QQCHAT_ONEBOT_URL: ws://napcat:3001
+      QQCHAT_ONEBOT_TOKEN: ${ONEBOT_TOKEN:-}
+
+      # ---- 机器人身份与行为 ----
+      QQCHAT_UIN: ${BOT_UIN:-}
+      QQCHAT_WHITELIST: ${WHITELIST:?请在 .env 里填 WHITELIST（* 表示全部，空值=忽略所有消息）}
+      QQCHAT_PERSONA: ${BOT_PERSONA:-}
+      QQCHAT_AI_DESIRE: ${AI_DESIRE:-50}
+      QQCHAT_AI_MODE: ${AI_MODE:-1}
+
+      # ---- 回复节奏 ----
+      QQCHAT_GROUP_COOLDOWN: ${GROUP_COOLDOWN:-8}
+      QQCHAT_PRIVATE_COOLDOWN: ${PRIVATE_COOLDOWN:-3}
+      QQCHAT_IDLE_FALLBACK: ${IDLE_FALLBACK:-60}
+      QQCHAT_SPLIT_REPLIES: ${SPLIT_REPLIES:-1}
+      QQCHAT_SEGMENT_DELAY_MS: ${SEGMENT_DELAY_MS:-700}
+
+      # ---- 运维 ----
+      QQCHAT_HEALTH_PORT: 8080
+      QQCHAT_HEALTH_BIND: "+"
+      # 面板访问令牌（可选）。设了之后访问面板要带 ?token=xxx（会自动记住）；
+      # /healthz 与 /readyz 不受影响，容器健康检查照常工作。
+      # 注意：这类变量必须写在本文件的 environment 里才会进容器 ——
+      # .env 只用于 compose 的 ${VAR} 变量替换，不会自动传给容器。
+      QQCHAT_PANEL_TOKEN: ${PANEL_TOKEN:-}
+      # 面板内扫码登录：机器人向 NapCat WebUI 取登录二维码（用户可以不出面板就扫码）
+      # 令牌值见 napcat/config/webui.json 的 token 字段；不配也不影响消息通道，
+      # 只是面板里那个「扫码登录」卡片会提示未配置。
+      QQCHAT_NAPCAT_WEBUI_URL: ${NAPCAT_WEBUI_URL:-http://napcat:6099}
+      QQCHAT_NAPCAT_WEBUI_TOKEN: ${NAPCAT_WEBUI_TOKEN:-}
+
+      # ---- 表情包（全库共用一份；行为类配置以 settings.json 为准，这里只当种子）----
+      QQCHAT_STICKERS: ${STICKERS:-1}
+      QQCHAT_STICKER_MAX: ${STICKER_MAX:-120}
+      QQCHAT_STICKER_CANDIDATES: ${STICKER_CANDIDATES:-6}
+      QQCHAT_STICKER_CURATE_INTERVAL: ${STICKER_CURATE_INTERVAL:-3600}
+      QQCHAT_STICKER_COOLDOWN: ${STICKER_COOLDOWN:-120}
+      QQCHAT_ENABLE_POKE: ${ENABLE_POKE:-1}
+      QQCHAT_POKE_COOLDOWN: ${POKE_COOLDOWN:-45}
+      QQCHAT_MOOD_TTL: ${MOOD_TTL:-7200}
+      # 图片下载的 SSRF 防护默认开；只有“自建 NapCat 回内网地址”时才设 1
+      QQCHAT_ALLOW_PRIVATE_IMAGE_HOSTS: ${ALLOW_PRIVATE_IMAGE_HOSTS:-0}
+      QQCHAT_VERBOSE: ${VERBOSE:-1}
+      TZ: ${TZ:-Asia/Shanghai}
+    volumes:
+      - ./data:/data                                # 设置 / 会话 / 人物档案 / 日志
+    ports:
+      # 健康检查 / 状态，仅本机可访问（容器内 HEALTHCHECK 不受影响）
+      - "127.0.0.1:8080:8080"
+    healthcheck:
+      test: ["CMD", "dotnet", "/app/QQChatAgent.Headless.dll", "--health"]
+      interval: 30s
+      timeout: 5s
+      start_period: 15s
+      retries: 3
+    networks:
+      - qqchat
+
+networks:
+  qqchat:
+    driver: bridge
+
+# ══════════════════════════════════════════════════════════════
+#  备选：反向 WebSocket（机器人监听 3001，NapCat 主动连入）
+#  优点：不必在 NapCat WebUI 里开正向 WS；改配置后两边都能重连。
+#
+#  1) 把 qqchat 服务的这两行改掉：
+#       QQCHAT_ONEBOT_PROTOCOL: ReverseWebSocket
+#       QQCHAT_ONEBOT_URL: http://0.0.0.0:3001
+#     并给它加端口暴露：
+#       ports:
+#         - "3001:3001"
+#  2) 在 NapCat WebUI（http://<主机IP>:6099）→ 网络配置 → 添加「反向 WebSocket」
+#     URL 填 ws://qqchat:3001，Token 与 ONEBOT_TOKEN 一致
+#
+#  ⚠️ Docker 版 NapCat 的限制：收不到语音与文件消息（纯文字/图片正常）。
+# ══════════════════════════════════════════════════════════════

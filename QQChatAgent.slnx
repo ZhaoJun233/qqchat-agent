@@ -1,0 +1,8 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/QQChatAgent.Headless/QQChatAgent.Headless.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/QQChatAgent.IntegrationHarness/QQChatAgent.IntegrationHarness.csproj" />
+  </Folder>
+</Solution>

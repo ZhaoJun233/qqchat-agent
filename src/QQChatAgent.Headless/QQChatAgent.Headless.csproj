@@ -1,0 +1,38 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <RootNamespace>QQChatAgent</RootNamespace>
+    <AssemblyName>QQChatAgent.Headless</AssemblyName>
+    <Version>0.1.0</Version>
+    <Description>QQ Chat Agent（无界面 / 跨平台 / 容器版）：OneBot v11 + OpenAI 兼容模型，挂接 NapCat 等协议端。</Description>
+
+    <!-- 容器优化：不变文化 + 只保留英文附属资源，镜像更小 -->
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+    <UseAppHost>true</UseAppHost>
+    <DockerDefaultTargetOS>Linux</DockerDefaultTargetOS>
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+  </PropertyGroup>
+
+  <!-- Web 面板静态资源嵌入程序集（单文件发布，无需挂载 wwwroot） -->
+  <ItemGroup>
+    <EmbeddedResource Include="wwwroot/**" LogicalName="web/%(Filename)%(Extension)" />
+  </ItemGroup>
+
+  <!--
+    登录二维码：面板里直接扫码登录 NapCat。
+    选 Net.Codecrete.QrCodeGenerator 而不是更常见的 QRCoder 有具体理由：
+      · 零依赖（net6.0/netstandard2.0 都没有 dependency），不会把 System.Drawing.Common
+        拖进镜像 —— 那个包在 Linux 上需要 libgdiplus，容器里没有，是运行时地雷。
+      · 直接输出 SVG：矢量图在手机上看更锐利，体积也只有 PNG 的几十分之一。
+  -->
+  <ItemGroup>
+    <PackageReference Include="Net.Codecrete.QrCodeGenerator" Version="3.2.1" />
+  </ItemGroup>
+
+</Project>

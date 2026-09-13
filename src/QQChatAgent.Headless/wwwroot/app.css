@@ -1,0 +1,1006 @@
+/* ══════════════════════════════════════════════════════════════
+   QQ Chat Agent · Web 面板样式
+   复刻 WinUI 3 / Fluent Design：Mica 背景 + 分层填充 + Windows 11 色板
+   颜色取自 Windows 11 Fluent 设计令牌（Light/Dark 双主题）
+   ══════════════════════════════════════════════════════════════ */
+
+/* ─────────── 主题令牌：浅色（默认） ─────────── */
+:root {
+  --accent: #0067c0;
+  --accent-hover: #1975c5;
+  --accent-press: #3183ca;
+  --on-accent: #ffffff;
+
+  --text-primary: rgba(0, 0, 0, 0.895);
+  --text-secondary: rgba(0, 0, 0, 0.606);
+  --text-tertiary: rgba(0, 0, 0, 0.446);
+  --text-disabled: rgba(0, 0, 0, 0.361);
+
+  --divider: rgba(0, 0, 0, 0.081);
+  --stroke: rgba(0, 0, 0, 0.058);
+
+  --card-bg: rgba(255, 255, 255, 0.70);
+  --card-bg-secondary: rgba(255, 255, 255, 0.50);
+  --subtle-secondary: rgba(0, 0, 0, 0.037);
+  --subtle-hover: rgba(0, 0, 0, 0.055);
+  --subtle-press: rgba(0, 0, 0, 0.024);
+  --control-fill: rgba(255, 255, 255, 0.70);
+  --control-border: rgba(0, 0, 0, 0.058);
+
+  /* Mica：桌面壁纸透色，用多层柔和径向渐变近似 */
+  --mica-base: #f3f3f3;
+  --mica-1: rgba(120, 165, 235, 0.20);
+  --mica-2: rgba(190, 150, 235, 0.14);
+  --mica-3: rgba(120, 210, 190, 0.12);
+
+  --shadow-flyout: 0 8px 24px rgba(0, 0, 0, 0.14), 0 0 2px rgba(0, 0, 0, 0.06);
+  --radius-card: 10px;
+  --radius-ctl: 6px;
+}
+
+/* ─────────── 主题令牌：深色 ─────────── */
+[data-theme="dark"] {
+  --accent: #60cdff;
+  --accent-hover: #7ad4ff;
+  --accent-press: #4cbdf0;
+  --on-accent: #000000;
+
+  --text-primary: #ffffff;
+  --text-secondary: rgba(255, 255, 255, 0.786);
+  --text-tertiary: rgba(255, 255, 255, 0.544);
+  --text-disabled: rgba(255, 255, 255, 0.363);
+
+  --divider: rgba(255, 255, 255, 0.084);
+  --stroke: rgba(255, 255, 255, 0.069);
+
+  --card-bg: rgba(255, 255, 255, 0.051);
+  --card-bg-secondary: rgba(255, 255, 255, 0.033);
+  --subtle-secondary: rgba(255, 255, 255, 0.061);
+  --subtle-hover: rgba(255, 255, 255, 0.083);
+  --subtle-press: rgba(255, 255, 255, 0.033);
+  --control-fill: rgba(255, 255, 255, 0.061);
+  --control-border: rgba(255, 255, 255, 0.069);
+
+  --mica-base: #202020;
+  --mica-1: rgba(70, 110, 190, 0.20);
+  --mica-2: rgba(120, 80, 180, 0.16);
+  --mica-3: rgba(50, 140, 130, 0.12);
+
+  --shadow-flyout: 0 8px 24px rgba(0, 0, 0, 0.44), 0 0 2px rgba(0, 0, 0, 0.20);
+}
+
+/* ─────────── 基础 ─────────── */
+* { box-sizing: border-box; }
+
+/* 关键：下面的 .page/.modal/.ctxmenu 等都带显式 display，
+   会盖过浏览器默认的 [hidden]{display:none}，必须显式提升优先级 */
+[hidden] { display: none !important; }
+
+html, body {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  font-family: "Segoe UI Variable Text", "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei",
+               system-ui, -apple-system, "PingFang SC", "Noto Sans CJK SC", sans-serif;
+  font-size: 14px;
+  color: var(--text-primary);
+  background-color: var(--mica-base);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+}
+
+/*
+  Mica 背景层。
+  关键：绝不能用 `background-attachment: fixed`（每滚一帧重绘整个背景，实测卡顿），
+  改用 fixed 定位的独立合成层 —— 浏览器把它单独提升为图层后，滚动时不需要重绘。
+*/
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background-image:
+    radial-gradient(1100px 720px at 12% -8%, var(--mica-1), transparent 62%),
+    radial-gradient(950px 620px at 88% 4%, var(--mica-2), transparent 60%),
+    radial-gradient(900px 700px at 52% 112%, var(--mica-3), transparent 62%);
+}
+
+button, input, textarea, select { font: inherit; color: inherit; }
+button { cursor: pointer; border: none; background: none; }
+h1, h2, h3, p { margin: 0; }
+
+::-webkit-scrollbar { width: 12px; height: 12px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: rgba(128, 128, 128, 0.42);
+  border: 4px solid transparent;
+  background-clip: content-box;
+  border-radius: 8px;
+}
+::-webkit-scrollbar-thumb:hover { background: rgba(128, 128, 128, 0.65); background-clip: content-box; }
+
+/* ─────────── 标题栏 ─────────── */
+.titlebar {
+  height: 48px;
+  flex: 0 0 48px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 16px 0 10px;
+  -webkit-app-region: drag;
+}
+
+.brand { display: flex; align-items: center; gap: 10px; }
+
+.brand-badge {
+  width: 26px; height: 26px;
+  border-radius: 7px;
+  background: var(--accent);
+  color: var(--on-accent);
+  display: grid;
+  place-items: center;
+}
+
+.brand-text { line-height: 1.24; }
+.brand-title { font-size: 13px; font-weight: 600; }
+.brand-sub { font-size: 10px; color: var(--text-secondary); }
+
+.titlebar-right { display: flex; align-items: center; gap: 12px; }
+
+.conn {
+  display: inline-flex; align-items: center; gap: 7px;
+  font-size: 12px; color: var(--text-secondary);
+  background: var(--card-bg);
+  border: 1px solid var(--stroke);
+  border-radius: 20px;
+  padding: 5px 12px 5px 10px;
+}
+
+/* 状态圆点 */
+.dot {
+  width: 8px; height: 8px; border-radius: 50%;
+  background: #9e9e9e;
+  display: inline-block;
+  flex: 0 0 auto;
+}
+.dot.on { background: #0fa958; box-shadow: 0 0 0 3px rgba(15, 169, 88, 0.16); }
+.dot.off { background: #9e9e9e; }
+.dot.busy { background: #f59e0b; animation: pulse 1.1s ease-in-out infinite; }
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+
+/* ─────────── 主布局 ─────────── */
+.shell {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+}
+
+/* 左侧导航（NavigationView LeftCompact） */
+.navrail {
+  flex: 0 0 60px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 4px;
+}
+
+.navitem {
+  width: 56px;
+  padding: 10px 2px 8px;
+  border-radius: 6px;
+  display: flex; flex-direction: column; align-items: center; gap: 5px;
+  font-size: 11px;
+  color: var(--text-secondary);
+  position: relative;
+  transition: background 90ms ease;
+}
+.navitem:hover { background: var(--subtle-hover); }
+.navitem:active { background: var(--subtle-press); }
+.navitem.active { color: var(--text-primary); font-weight: 600; }
+.navitem.active::before {
+  content: "";
+  position: absolute;
+  left: -4px; top: 50%;
+  transform: translateY(-50%);
+  width: 3px; height: 18px;
+  border-radius: 2px;
+  background: var(--accent);
+}
+
+/*
+  ⚠ 性能：这里曾经用 backdrop-filter: blur(30px) 做毛玻璃。
+  主内容区一旦加 backdrop-filter，滚动时浏览器必须逐帧重新采样并模糊下层像素，
+  在高分屏上直接拖到 20fps 以下。
+  改用“固定背景层 + 半透明面板”实现同样的窥透观感：合成成本趋近于零。
+*/
+.page {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  border-radius: 8px 0 0 0;
+  background: var(--card-bg);
+  border-top: 1px solid var(--stroke);
+  border-left: 1px solid var(--stroke);
+  overflow: hidden;
+}
+
+/* ═══════════ 聊天页 ═══════════ */
+
+.conv-pane {
+  flex: 0 0 300px;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  background: var(--card-bg-secondary);
+}
+
+.conv-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 12px 8px 6px 16px;
+}
+.conv-head h1 { font-size: 20px; font-weight: 600; }
+
+.ai-toggle {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  transition: background 90ms ease;
+}
+.ai-toggle:hover { background: var(--subtle-hover); }
+.ai-toggle.on { color: #0f9d58; }
+[data-theme="dark"] .ai-toggle.on { color: #4ade80; }
+.ai-ico {
+  width: 9px; height: 9px; border-radius: 50%;
+  background: currentColor;
+  display: inline-block;
+}
+
+.search-wrap { padding: 0 12px 10px; }
+
+input[type="search"], input[type="text"], input[type="number"], textarea, select {
+  width: 100%;
+  background: var(--control-fill);
+  border: 1px solid var(--control-border);
+  border-bottom: 1px solid rgba(0, 0, 0, 0.24);
+  border-radius: var(--radius-ctl);
+  padding: 7px 10px;
+  color: var(--text-primary);
+  outline: none;
+  transition: border-color 90ms ease, background 90ms ease;
+}
+[data-theme="dark"] input, [data-theme="dark"] textarea, [data-theme="dark"] select {
+  border-bottom-color: rgba(255, 255, 255, 0.28);
+}
+input:focus, textarea:focus, select:focus {
+  border-bottom: 2px solid var(--accent);
+  padding-bottom: 6px;
+}
+input[readonly] { color: var(--text-secondary); background: var(--subtle-press); cursor: default; }
+textarea { resize: vertical; line-height: 1.5; }
+
+.conv-list {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 0 6px 8px;
+  overscroll-behavior: contain;
+  contain: layout paint;
+}
+
+.conv {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px;
+  margin-bottom: 2px;
+  border-radius: 6px;
+  cursor: pointer;
+  position: relative;
+  transition: background 90ms ease;
+}
+.conv:hover { background: var(--subtle-hover); }
+.conv.active { background: var(--subtle-secondary); }
+.conv.active::before {
+  content: "";
+  position: absolute; left: 0; top: 50%;
+  transform: translateY(-50%);
+  width: 3px; height: 20px;
+  border-radius: 2px;
+  background: var(--accent);
+}
+
+/* 头像（WinUI 里是渐变 Brush + 首字，有 QQ 头像时显示图片） */
+.avatar {
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  color: #fff;
+  font-weight: 600;
+  flex: 0 0 auto;
+  overflow: hidden;
+  position: relative;
+  background: linear-gradient(135deg, #5e5ce6, #8e6cef);
+}
+.avatar img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.av-42 { width: 42px; height: 42px; font-size: 16px; }
+.av-38 { width: 38px; height: 38px; font-size: 15px; }
+
+.conv-main { flex: 1 1 auto; min-width: 0; }
+.conv-row { display: flex; align-items: center; gap: 8px; }
+.conv-name {
+  flex: 1 1 auto; min-width: 0;
+  font-size: 14px; font-weight: 600;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.conv-time { font-size: 11px; color: var(--text-secondary); flex: 0 0 auto; }
+.conv-preview {
+  flex: 1 1 auto; min-width: 0;
+  font-size: 12px; color: var(--text-secondary);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.badge {
+  min-width: 18px; height: 18px;
+  border-radius: 9px;
+  padding: 0 5px;
+  background: var(--accent);
+  color: var(--on-accent);
+  font-size: 10px;
+  display: grid; place-items: center;
+  flex: 0 0 auto;
+}
+.conv-think {
+  font-size: 10px; color: var(--accent);
+  flex: 0 0 auto;
+  animation: pulse 1.1s ease-in-out infinite;
+}
+
+.conv-empty, .chat-empty {
+  flex: 1 1 auto;
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  gap: 6px;
+  color: var(--text-secondary);
+  font-size: 15px;
+  text-align: center;
+  padding: 24px;
+}
+.conv-empty .sub, .chat-empty .sub { font-size: 12px; color: var(--text-tertiary); line-height: 1.7; }
+
+.vdivider { flex: 0 0 1px; background: var(--divider); }
+
+.chat-pane {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+}
+
+.chat-head {
+  flex: 0 0 auto;
+  display: flex; align-items: center; gap: 12px;
+  padding: 12px 24px 12px 20px;
+  border-bottom: 1px solid var(--divider);
+}
+.chat-head-main { flex: 1 1 auto; min-width: 0; }
+.chat-head-line { display: flex; align-items: center; gap: 8px; }
+.chat-head h2 {
+  font-size: 16px; font-weight: 600;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.kind-tag {
+  border-radius: 8px; padding: 1px 6px;
+  font-size: 10px; color: #fff;
+  background: #7c6cf0;
+  flex: 0 0 auto;
+}
+.kind-tag.private { background: #4f8ef7; }
+.chat-head .meta { font-size: 12px; color: var(--text-secondary); margin-top: 2px; }
+.chat-head-status {
+  display: flex; align-items: center; gap: 7px;
+  font-size: 12px; color: var(--text-secondary);
+  flex: 0 0 auto;
+}
+
+.msg-scroll {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  padding: 8px 0 16px;
+  overscroll-behavior: contain;
+  contain: layout paint;
+}
+.msg-list { display: flex; flex-direction: column; }
+
+/* 单条消息不参与外部布局计算：长列表滚动时只重绘可见部分 */
+.msg { contain: layout style; }
+
+/* 消息气泡：三类模板对应 WinUI 的 Peer/Self/System DataTemplate */
+.msg { display: flex; flex-direction: column; margin-top: 6px; max-width: 560px; }
+.msg.peer { margin-left: 20px; margin-right: 72px; align-items: flex-start; }
+.msg.self { margin-left: 72px; margin-right: 20px; align-items: flex-end; }
+.msg.system { margin: 10px 24px 0; align-items: center; max-width: none; }
+
+.msg-sender {
+  font-size: 11px; color: var(--text-secondary);
+  margin: 0 4px 4px; 
+  display: flex; align-items: center; gap: 5px;
+}
+.msg-sender .uid { color: var(--text-tertiary); cursor: pointer; }
+.msg-sender .uid:hover { color: var(--accent); text-decoration: underline; }
+
+.bubble {
+  padding: 8px 12px;
+  font-size: 14px;
+  line-height: 21px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  user-select: text;
+  max-width: 100%;
+}
+.msg.peer .bubble {
+  background: var(--subtle-secondary);
+  border-radius: 18px 18px 18px 4px;
+}
+.msg.self .bubble {
+  background: var(--accent);
+  color: var(--on-accent);
+  border-radius: 18px 18px 4px 18px;
+}
+.msg.system .bubble {
+  background: var(--subtle-secondary);
+  color: var(--text-secondary);
+  border-radius: 10px;
+  font-size: 12px;
+  line-height: 17px;
+  padding: 6px 12px;
+  text-align: center;
+  max-width: 480px;
+}
+
+.msg-time { font-size: 11px; color: var(--text-tertiary); margin: 4px 4px 0; }
+.msg.self .msg-time { text-align: right; }
+
+.bubble img {
+  max-width: 240px; max-height: 240px;
+  border-radius: 10px; display: block; margin-top: 6px;
+}
+
+/* 「AI 正在思考…」—— 小面积且不随滚动重绘，可保留轻量背景 */
+.thinking {
+  position: absolute;
+  left: 24px; bottom: 96px;
+  display: flex; align-items: center; gap: 7px;
+  background: var(--subtle-secondary);
+  border-radius: 12px;
+  padding: 5px 10px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.composer {
+  flex: 0 0 auto;
+  display: flex; align-items: flex-end; gap: 10px;
+  padding: 8px 16px 14px;
+}
+.composer textarea {
+  flex: 1 1 auto;
+  max-height: 132px;
+  padding: 9px 12px;
+  border-radius: 8px;
+  resize: none;
+  overflow-y: auto;
+}
+
+.accent-btn {
+  display: inline-flex; align-items: center; gap: 6px;
+  height: 40px;
+  min-width: 76px;
+  padding: 0 16px;
+  border-radius: 8px;
+  background: var(--accent);
+  color: var(--on-accent);
+  font-size: 14px;
+  font-weight: 600;
+  justify-content: center;
+  transition: background 90ms ease;
+}
+.accent-btn:hover { background: var(--accent-hover); }
+.accent-btn:active { background: var(--accent-press); }
+.accent-btn:disabled { background: var(--subtle-secondary); color: var(--text-disabled); cursor: default; }
+.accent-btn.big { height: 36px; min-width: 120px; font-size: 14px; }
+
+/* ═══════════ 设置页 ═══════════ */
+
+/* 页面改成纵向：上面是可滚动的内容，下面是常驻操作栏。
+   以前保存按钮在长页面最底部（前面还压着日志框），不滚到底就看不到 ——
+   用户会觉得“没有保存按钮”。 */
+.page-column { flex-direction: column; }
+
+.settings-scroll { flex: 1 1 auto; overflow-y: auto; min-height: 0; }
+
+/*
+ * 设置页能有多宽用多宽：原来钉死在 840px，在宽屏（12 寸以上、全屏浏览器）就变成
+ * “左边一条卡片、右边一大块空白”。宽屏下改两列排布，窄屏（手机/平板）仍是单列。
+ */
+.settings-inner { width: 100%; max-width: 1240px; padding: 24px 32px 32px; display: flex; flex-direction: column; gap: 14px; }
+
+@media (min-width: 1180px) {
+  .settings-inner {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    align-items: start;
+  }
+
+  /* 标题 / 说明 / 提示条 / 底部操作栏横跨两列（它们是整页级别的，不该被塞进某一列） */
+  .settings-inner > :not(.card) { grid-column: 1 / -1; }
+
+  /* 日志卡片占满整行，看得更多 */
+  .settings-inner > .log-card { grid-column: 1 / -1; }
+
+  /* 卡片内部原本就是两列的小格子；卡片变窄一半后改回单列，否则挤成一指宽 */
+  .settings-inner .grid-2 { grid-template-columns: 1fr; }
+}
+
+/* 常驻底部操作栏 */
+.settings-footer {
+  flex: 0 0 auto;
+  display: flex; flex-direction: column; gap: 10px;
+  padding: 12px 32px 14px;
+  border-top: 1px solid var(--divider);
+  background: var(--card-bg);
+}
+.settings-footer .infobar { margin: 0; }
+.dirty-hint { font-size: 12px; color: var(--accent); white-space: nowrap; }
+.page-title { font-size: 28px; font-weight: 600; }
+.page-desc { color: var(--text-secondary); line-height: 1.6; }
+
+.card {
+  background: var(--card-bg);
+  border: 1px solid var(--divider);
+  border-radius: var(--radius-card);
+  padding: 20px;
+  display: flex; flex-direction: column; gap: 14px;
+}
+.card-head h3 { font-size: 17px; font-weight: 600; }
+.card-head p { font-size: 12px; color: var(--text-secondary); margin-top: 2px; line-height: 1.6; }
+
+.field { display: flex; flex-direction: column; gap: 6px; }
+.field > label { font-size: 12px; color: var(--text-secondary); display: flex; align-items: center; gap: 8px; }
+.field .hint { color: var(--text-tertiary); font-size: 11px; font-weight: 400; }
+.field .hint code {
+  background: var(--subtle-secondary); padding: 0 4px; border-radius: 3px; font-size: 11px;
+}
+.field .val { margin-left: auto; color: var(--text-primary); font-size: 12px; font-weight: 600; }
+.grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+
+input[type="range"] {
+  width: 100%; accent-color: var(--accent);
+  padding: 0; border: none; background: none;
+  border-bottom: none !important;
+}
+
+.switch-row {
+  display: flex; align-items: center; gap: 10px;
+  font-size: 13px; cursor: pointer; user-select: none;
+}
+.switch-row input { display: none; }
+.switch {
+  width: 40px; height: 20px; border-radius: 10px;
+  background: var(--subtle-secondary);
+  border: 1px solid var(--control-border);
+  position: relative; flex: 0 0 auto;
+  transition: background 120ms ease;
+}
+.switch::after {
+  content: ""; position: absolute; top: 3px; left: 3px;
+  width: 12px; height: 12px; border-radius: 50%;
+  background: var(--text-secondary);
+  transition: transform 120ms cubic-bezier(0.2, 0, 0, 1), background 120ms ease;
+}
+.switch-row input:checked + .switch { background: var(--accent); border-color: transparent; }
+.switch-row input:checked + .switch::after { transform: translateX(19px); background: var(--on-accent); }
+
+.status-bar {
+  border-radius: 6px;
+  padding: 12px 16px;
+  background: var(--card-bg-secondary);
+  border-left: 3px solid #0f9d58;
+}
+.status-bar.warn { border-left-color: #f59e0b; }
+.status-bar.err { border-left-color: #e5484d; }
+.status-bar-title { font-size: 13px; font-weight: 600; }
+.status-bar-msg { font-size: 12px; color: var(--text-secondary); margin-top: 2px; line-height: 1.6; }
+
+.infobar {
+  display: flex; align-items: center; gap: 10px;
+  background: rgba(15, 157, 88, 0.10);
+  border: 1px solid rgba(15, 157, 88, 0.28);
+  border-radius: 6px;
+  padding: 11px 14px;
+  font-size: 13px;
+  color: var(--text-primary);
+}
+
+.settings-actions { display: flex; align-items: center; gap: 12px; }
+.path-hint { font-size: 11px; color: var(--text-tertiary); word-break: break-all; }
+
+.logbox {
+  height: 190px;
+  overflow-y: auto;
+  background: var(--subtle-press);
+  border: 1px solid var(--stroke);
+  border-radius: 6px;
+  padding: 8px 10px;
+  font-family: "Cascadia Mono", "Consolas", "SFMono-Regular", Menlo, monospace;
+  font-size: 11.5px;
+  line-height: 1.65;
+  color: var(--text-secondary);
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+.logbox .lt { color: var(--text-tertiary); }
+
+/* ═══════════ 表情包库 ═══════════ */
+
+.sticker-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.sticker-actions .ghost-btn { height: 34px; font-size: 13px; }
+
+.sticker-toolbar {
+  display: flex; align-items: center; gap: 8px;
+  padding: 10px 18px;
+  border-bottom: 1px solid var(--divider);
+}
+.sticker-stat { flex: 1 1 auto; font-size: 12px; color: var(--text-secondary); }
+.ghost-btn.small { height: 30px; padding: 0 12px; font-size: 12px; }
+
+.sticker-grid {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(104px, 1fr));
+  gap: 10px;
+  padding: 14px 18px 18px;
+  min-height: 120px;
+}
+
+.sticker-cell {
+  position: relative;
+  border-radius: 10px;
+  overflow: hidden;
+  background: #ffffff;          /* 表情包多是透明 PNG，白底才看得清 */
+  border: 1px solid var(--divider);
+  aspect-ratio: 1 / 1;
+  display: flex; flex-direction: column;
+}
+.sticker-cell img {
+  width: 100%; flex: 1 1 auto; min-height: 0;
+  object-fit: contain;
+  display: block;
+}
+.sticker-cell .cap {
+  flex: 0 0 auto;
+  background: var(--subtle-secondary);
+  color: var(--text-secondary);
+  font-size: 10.5px;
+  line-height: 1.45;
+  padding: 4px 6px;
+  max-height: 46px;
+  overflow: hidden;
+}
+.sticker-cell .uses { color: var(--text-tertiary); }
+.sticker-cell .del {
+  position: absolute; top: 4px; right: 4px;
+  width: 24px; height: 24px; border-radius: 50%;
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff; font-size: 12px; line-height: 24px; text-align: center;
+}
+.sticker-cell .del:hover { background: #e5484d; }
+.sticker-empty { grid-column: 1 / -1; color: var(--text-tertiary); font-size: 13px; text-align: center; padding: 30px 0; }
+
+.modal-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--divider);
+}
+.modal-head h3 { font-size: 16px; font-weight: 600; }
+.modal-head button {
+  width: 30px; height: 30px; border-radius: 6px;
+  color: var(--text-secondary); font-size: 14px;
+}
+.modal-head button:hover { background: var(--subtle-hover); }
+
+/* ═══════════ 浮层 ═══════════ */
+
+/* 浮层只在弹出时短暂存在，小面积 blur 不影响滚动 */
+.ctxmenu {
+  position: fixed;
+  z-index: 40;
+  min-width: 170px;
+  padding: 5px;
+  border-radius: 8px;
+  background: var(--card-bg);
+  border: 1px solid var(--divider);
+  box-shadow: var(--shadow-flyout);
+  display: flex; flex-direction: column;
+}
+.ctxmenu button {
+  text-align: left;
+  padding: 8px 12px;
+  border-radius: 5px;
+  font-size: 13px;
+  color: var(--text-primary);
+}
+.ctxmenu button:hover { background: var(--subtle-hover); }
+.ctxmenu button.danger { color: #e5484d; }
+
+.modal {
+  position: fixed; inset: 0; z-index: 50;
+  background: rgba(0, 0, 0, 0.32);
+  display: grid; place-items: center;
+  padding: 24px;
+}
+.modal-card {
+  width: min(720px, 100%);
+  max-height: 80vh;
+  display: flex; flex-direction: column;
+  background: var(--mica-base);
+  border: 1px solid var(--divider);
+  border-radius: 12px;
+  box-shadow: var(--shadow-flyout);
+  overflow: hidden;
+}
+.modal-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--divider);
+}
+.modal-head h3 { font-size: 15px; font-weight: 600; }
+.modal-head button { font-size: 16px; color: var(--text-secondary); padding: 2px 6px; border-radius: 5px; }
+.modal-head button:hover { background: var(--subtle-hover); }
+.profile-body {
+  margin: 0; padding: 16px 18px; overflow: auto;
+  font-family: "Cascadia Mono", "Consolas", monospace;
+  font-size: 12px; line-height: 1.75; white-space: pre-wrap; word-break: break-word;
+}
+
+.toast {
+  position: fixed;
+  left: 50%; bottom: 32px;
+  transform: translateX(-50%);
+  z-index: 60;
+  background: var(--mica-base);
+  border: 1px solid var(--divider);
+  box-shadow: var(--shadow-flyout);
+  border-radius: 8px;
+  padding: 10px 18px;
+  font-size: 13px;
+}
+
+/* ─────────── 扫码登录卡片 ───────────
+   QQ 未登录时出现在聊天区顶部。二维码直接显示在面板里，
+   不必再跳到 NapCat 的 WebUI（另一个域名 + 另一道认证）。
+   绿色/黄色边条跟随账号状态：黄条 = 未登录。 */
+.login-card {
+  flex: 0 0 auto;
+  display: flex; align-items: center; gap: 18px;
+  margin: 14px 20px 0;
+  padding: 16px 18px;
+  border-radius: var(--radius-card);
+  background: var(--card-bg-secondary);
+  border: 1px solid var(--stroke);
+  border-left: 3px solid #f59e0b;
+}
+.login-qr {
+  flex: 0 0 auto;
+  width: 172px; height: 172px;
+  display: flex; align-items: center; justify-content: center;
+  background: #fff; /* 二维码必须白底黑块，深色主题下也不能反色 */
+  border-radius: 8px;
+  padding: 8px;
+  overflow: hidden;
+}
+.login-qr img { width: 100%; height: 100%; display: block; }
+.login-qr-state { font-size: 12px; color: #4a4a4a; text-align: center; padding: 0 8px; line-height: 1.7; }
+.login-body { flex: 1 1 auto; min-width: 0; }
+.login-body h3 { margin: 0 0 6px; font-size: 15px; font-weight: 600; }
+.login-msg { margin: 0; font-size: 12px; color: var(--text-secondary); line-height: 1.7; }
+.login-actions { display: flex; gap: 8px; margin-top: 12px; }
+.login-url { margin: 10px 0 0; font-size: 11px; color: var(--text-tertiary); line-height: 1.6; word-break: break-all; }
+.login-url code {
+  background: var(--subtle-secondary);
+  padding: 1px 5px; border-radius: 4px;
+  font-size: 11px; user-select: all;
+}
+
+.ghost-btn {
+  height: 40px; padding: 0 14px;
+  border-radius: 8px;
+  background: var(--control-fill);
+  border: 1px solid var(--control-border);
+  color: var(--text-primary);
+  font-size: 13px;
+  transition: background 90ms ease;
+}
+.ghost-btn:hover { background: var(--subtle-hover); }
+.ghost-btn.inline { height: 30px; padding: 0 12px; font-size: 12px; margin-top: 10px; }
+
+/* ─────────── 手机端底部导航（桌面端隐藏） ─────────── */
+.mtabbar { display: none; }
+
+/* 聊天页的返回按钮：只在手机端出现 */
+.chat-back {
+  display: none;
+  width: 36px; height: 36px;
+  flex: 0 0 auto;
+  border-radius: 8px;
+  align-items: center; justify-content: center;
+  color: var(--text-secondary);
+  margin-right: 2px;
+}
+.chat-back:active { background: var(--subtle-press); }
+
+/* ═══════════════════════════════════════════════
+   手机／窄屏（≤ 760px）
+   一段式排版：会话列表与聊天区不再并排，改为“列表 → 点进会话 → 返回”的主从式导航，
+   导航从左侧 rail 改成拇指能碰到的底部标签栏，并处理刘海屏安全区。
+   ═══════════════════════════════════════════════ */
+@media (max-width: 760px) {
+  /* dvh：移动浏览器地址栏收起/展开时不会把输入框挤到屏幕外 */
+  @supports (height: 100dvh) {
+    body { height: 100dvh; }
+  }
+
+  .shell { flex-direction: column; }
+
+  /* 左侧 rail → 底部标签栏 */
+  .navrail { display: none; }
+  .mtabbar {
+    flex: 0 0 auto;
+    display: flex;
+    border-top: 1px solid var(--divider);
+    background: var(--card-bg);
+    /* 小横条/手势条不被内容盖住 */
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+  .mtab {
+    flex: 1 1 0;
+    display: flex; flex-direction: column; align-items: center; gap: 3px;
+    padding: 9px 4px 7px;
+    font-size: 11px;
+    color: var(--text-secondary);
+  }
+  .mtab.active { color: var(--accent); font-weight: 600; }
+
+  /* 标题栏：手机上只留徽标 + 状态，省出一行高度 */
+  .titlebar { height: 44px; flex-basis: 44px; padding: 0 12px 0 8px; }
+  .brand-sub { display: none; }
+  .conn { font-size: 11px; padding: 4px 10px 4px 9px; gap: 6px; }
+
+  /* 主区域：去掉桌面端的圆角/边框，单栏铺满 */
+  .page {
+    border-radius: 0;
+    border-left: none;
+    border-top: none;
+  }
+  .vdivider { display: none; }
+
+  /* —— 主从式导航：默认只看会话列表，点进会话才看聊天 —— */
+  .conv-pane { flex: 1 1 auto; width: 100%; }
+  .chat-pane { display: none; }
+  body.m-chat-open .conv-pane { display: none; }
+  body.m-chat-open .chat-pane { display: flex; }
+
+  .conv-head { padding: 10px 8px 4px 14px; }
+  .conv-head h1 { font-size: 19px; }
+  .search-wrap { padding: 0 10px 8px; }
+  .conv-list { padding: 0 4px calc(6px + env(safe-area-inset-bottom, 0px)); }
+
+  /* 手指点选：行高提到 56px，去掉“只有 hover 才看得见”的反馈 */
+  .conv { padding: 9px 8px; min-height: 56px; gap: 9px; }
+  .conv.active::before { display: none; }        /* 回到列表时不再标记高亮，避免误会 */
+  .conv:active { background: var(--subtle-press); }
+  .av-42 { width: 40px; height: 40px; font-size: 15px; }
+  .conv-name { font-size: 15px; }
+  .conv-preview { font-size: 13px; }
+
+  /* 聊天头部：返回键 + 会话名 + 状态 */
+  .chat-back { display: inline-flex; }
+  .chat-head { padding: 10px 12px 10px 8px; gap: 8px; }
+  .chat-head h2 { font-size: 15px; }
+  .av-38 { width: 36px; height: 36px; font-size: 14px; }
+  .chat-head-status { font-size: 11px; max-width: 42%; }
+  .chat-head-status span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+  /* 气泡：两边留白收窄，长图不撑破屏幕 */
+  .msg-scroll { padding: 6px 0 10px; -webkit-overflow-scrolling: touch; }
+  .msg { max-width: 100%; }
+  .msg.peer { margin-left: 12px; margin-right: 34px; }
+  .msg.self { margin-left: 34px; margin-right: 12px; }
+  .msg.system { margin: 8px 14px 0; }
+  .bubble img { max-width: 62vw; max-height: 42vh; }
+
+  .thinking { left: 12px; bottom: 70px; }
+
+  /* 输入区：底部紧贴标签栏，不需要额外安全区内边距（下面就是 .mtabbar） */
+  .composer { padding: 6px 10px 10px; gap: 8px; }
+  .composer textarea { padding: 10px 12px; border-radius: 10px; }
+  .composer .accent-btn { min-width: 64px; height: 44px; padding: 0 14px; }
+
+  /* 16px 是 iOS Safari 的分水岭：小于它，聚焦输入框时页面会被自动放大 */
+  input, textarea, select { font-size: 16px; }
+  .field > label { font-size: 13px; }
+  .field .hint { font-size: 11.5px; }
+  .switch-row { font-size: 14px; padding: 4px 0; }
+  .switch { width: 44px; height: 24px; border-radius: 12px; }
+  .switch::after { width: 16px; height: 16px; top: 3px; left: 3px; }
+  .switch-row input:checked + .switch::after { transform: translateX(20px); }
+
+  /* 设置页 */
+  .settings-inner { padding: 16px 14px 20px; gap: 12px; }
+  .page-title { font-size: 22px; }
+  .page-desc { font-size: 13px; }
+  .card { padding: 14px; gap: 12px; }
+  .card-head h3 { font-size: 16px; }
+  .settings-footer { padding: 10px 14px 12px; gap: 8px; }
+  .settings-actions { flex-wrap: wrap; gap: 8px; }
+  .accent-btn.big { flex: 1 1 auto; min-width: 0; height: 44px; }
+  .path-hint { flex-basis: 100%; }
+  .logbox { height: 150px; font-size: 11px; }
+
+  /* 扫码登录卡片：竖排 + 大码，方便手机对着屏幕扫 */
+  .login-card { margin: 10px 12px 0; padding: 14px; gap: 10px; }
+  /* 宽度、高度都参与取小：矮屏（640px 级）上二维码太大会把输入框挤出屏幕 */
+  .login-qr { width: min(58vw, 26vh, 200px); height: auto; aspect-ratio: 1 / 1; align-self: center; }
+  /* 两个按钮并排：竖排会多占 50px 高度，矮屏上就是它把输入框顶出去的 */
+  .login-actions { flex-direction: row; }
+  .login-actions button { flex: 1 1 0; width: auto; }
+  .login-qr-state { font-size: 13px; }
+
+  /* 弹层：手机上占满屏，内容区可滚 */
+  .modal { padding: 10px; }
+  .modal-card { width: 100%; max-height: 92vh; border-radius: 10px; }
+  .profile-body { font-size: 12px; }
+
+  /* 右键菜单 → 长按菜单：按钮加大到手指能点 */
+  .ctxmenu { min-width: 200px; }
+  .ctxmenu button { padding: 12px 14px; font-size: 14px; }
+
+  /* 日志/表格类内容不横向溢出 */
+  .profile-body, .logbox { word-break: break-word; }
+}
+
+/* 超窄屏（≤ 380px，小尺寸安卓机）：再省一点空间 */
+@media (max-width: 380px) {
+  .brand-title { font-size: 12px; }
+  .conn { padding: 3px 8px; font-size: 10px; }
+  .chat-head-status { max-width: 36%; }
+}
+
+/* 矮屏（横屏手机 / 小尺寸安卓）：把扫码卡片的文案压紧，保证输入框始终在屏内 */
+@media (max-width: 760px) and (max-height: 700px) {
+  .login-card { padding: 10px; gap: 8px; }
+  .login-msg { font-size: 11.5px; line-height: 1.5; }
+  .login-qr { width: min(52vw, 24vh, 180px); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+}
+@media (max-width: 860px) {
+  .grid-2 { grid-template-columns: 1fr; }
+  .settings-inner { padding: 18px 18px 24px; }
+  .settings-footer { padding: 12px 18px 14px; }
+  .login-card { flex-direction: column; align-items: stretch; margin: 12px 14px 0; }
+  .login-qr { width: 150px; height: 150px; align-self: center; }
+}
