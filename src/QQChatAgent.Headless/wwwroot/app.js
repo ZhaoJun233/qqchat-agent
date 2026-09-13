@@ -855,6 +855,8 @@
     $("setMusicLibraryMax").value = r.musicLibraryMax;
     $("setMusicNoteTtlDays").value = r.musicNoteTtlDays;
     $("setMusicListenCooldown").value = r.musicListenCooldownSeconds;
+    $("setMusicUnderstandModel").value = r.musicUnderstandModel || "";
+    $("setMusicSendAudio").checked = r.musicSendAudioToModel !== false;
     $("setMusicKeepAudio").checked = r.musicKeepAudio === true;
     $("musicHint").textContent = "网易云 Cookie：" + (r.neteaseCookieSet ? "已设置（环境变量）" : "未设置（可选）");
     $("setEnableLinkPreview").checked = r.enableLinkPreview !== false;
@@ -930,6 +932,8 @@
       musicLibraryMax: Number($("setMusicLibraryMax").value),
       musicNoteTtlDays: Number($("setMusicNoteTtlDays").value),
       musicListenCooldownSeconds: Number($("setMusicListenCooldown").value),
+      musicUnderstandModel: $("setMusicUnderstandModel").value.trim(),
+      musicSendAudioToModel: $("setMusicSendAudio").checked,
       musicKeepAudio: $("setMusicKeepAudio").checked,
       enableLinkPreview: $("setEnableLinkPreview").checked,
       linkPreviewTimeoutSeconds: Number($("setLinkPreviewTimeout").value),

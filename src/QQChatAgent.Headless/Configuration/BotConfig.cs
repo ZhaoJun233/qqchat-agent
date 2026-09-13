@@ -98,6 +98,9 @@ public static class BotConfig
     [nameof(AppSettings.MoodTtlSeconds)] = new[] { "QQCHAT_MOOD_TTL" },
     [nameof(AppSettings.EnableMusic)] = new[] { "QQCHAT_ENABLE_MUSIC" },
     [nameof(AppSettings.MusicListenCooldownSeconds)] = new[] { "QQCHAT_MUSIC_LISTEN_COOLDOWN" },
+    [nameof(AppSettings.MusicUnderstandModel)] = new[] { "QQCHAT_MUSIC_MODEL" },
+    [nameof(AppSettings.MusicSendAudioToModel)] = new[] { "QQCHAT_MUSIC_SEND_AUDIO" },
+    [nameof(AppSettings.MusicAudioToModelMaxKb)] = new[] { "QQCHAT_MUSIC_AUDIO_MAX_KB" },
     [nameof(AppSettings.MusicSources)] = new[] { "QQCHAT_MUSIC_SOURCES" },
     [nameof(AppSettings.NeteaseBaseUrl)] = new[] { "QQCHAT_NETEASE_BASE_URL" },
     [nameof(AppSettings.EnableLinkPreview)] = new[] { "QQCHAT_LINK_PREVIEW" },
@@ -170,6 +173,9 @@ public static class BotConfig
         s.MoodTtlSeconds = Int("QQCHAT_MOOD_TTL") ?? s.MoodTtlSeconds;
         s.EnableMusic = Bool("QQCHAT_ENABLE_MUSIC") ?? s.EnableMusic;
         s.MusicListenCooldownSeconds = Int("QQCHAT_MUSIC_LISTEN_COOLDOWN") ?? s.MusicListenCooldownSeconds;
+        s.MusicUnderstandModel = Str("QQCHAT_MUSIC_MODEL") ?? s.MusicUnderstandModel;
+        s.MusicSendAudioToModel = Bool("QQCHAT_MUSIC_SEND_AUDIO") ?? s.MusicSendAudioToModel;
+        s.MusicAudioToModelMaxKb = Int("QQCHAT_MUSIC_AUDIO_MAX_KB") ?? s.MusicAudioToModelMaxKb;
         s.MusicSources = Str("QQCHAT_MUSIC_SOURCES") ?? s.MusicSources;
         s.NeteaseBaseUrl = Str("QQCHAT_NETEASE_BASE_URL") ?? s.NeteaseBaseUrl;
         s.EnableLinkPreview = Bool("QQCHAT_LINK_PREVIEW") ?? s.EnableLinkPreview;

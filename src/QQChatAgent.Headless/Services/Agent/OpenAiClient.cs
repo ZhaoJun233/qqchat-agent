@@ -974,6 +974,101 @@ public sealed class OpenAiClient
         return text[..cut];
     }
 
+    /// <summary>
+    /// 让模型“亲耳听”：把低码率音频（截前 N 秒 / N KB）交给**独立的音频识别模型**，
+    /// 让它客观描述听到的内容（曲风/编配/人声/情绪/节奏感）。
+    ///
+    /// 为什么要单独配一个模型：主模型（gemini-3.8-flash-high）实测收不到音频 —— 代理会把音频静默丢掉，
+    /// 它只能看到文字，于是“听歌”就只剩手写 DSP 的客观数字（听不出曲风情绪）。
+    /// 实测同代理上 gemini-3.7-flash-high / gemini-3-flash / gemini-3.1-pro-low 真能听到（用 440Hz 蜂鸣验证过）。
+    ///
+    /// 返回 null 表示“这次没听到”（未配置/模型不支持/请求失败）—— 调用方降级回只给 DSP 实测数据。
+    /// </summary>
+    public async Task<string?> DescribeAudioAsync(byte[] audio, string format, string title, string? artist, CancellationToken ct)
+    {
+        var model = _settings.MusicUnderstandModel?.Trim();
+        if (string.IsNullOrWhiteSpace(model) || !_settings.MusicSendAudioToModel || audio.Length == 0)
+        {
+            return null;
+        }
+
+        var capKb = Math.Clamp(_settings.MusicAudioToModelMaxKb, 128, 4096);
+        var bytes = audio.Length > capKb * 1024 ? audio[..(capKb * 1024)] : audio;
+
+        var text = "这是一首歌的片段（低码率、可能被截断）。" +
+            $"歌名：{title}" + (string.IsNullOrWhiteSpace(artist) ? "。" : $"，歌手：{artist}。") +
+            "请只说你**听到的**：曲风、编配与主要乐器、人声特点（音色/唱法）、情绪与氛围、节奏快慢与律动、" +
+            "如果能听清歌词就引用一两句。听不清/听不到就直接说听不到，不要根据歌名猜、不要编造。用 3-5 句话。";
+
+        var messages = new JsonArray
+        {
+            new JsonObject
+            {
+                ["role"] = "user",
+                ["content"] = new JsonArray
+                {
+                    new JsonObject { ["type"] = "text", ["text"] = text },
+                    new JsonObject
+                    {
+                        ["type"] = "input_audio",
+                        ["input_audio"] = new JsonObject
+                        {
+                            ["data"] = Convert.ToBase64String(bytes),
+                            ["format"] = format
+                        }
+                    }
+                }
+            }
+        };
+
+        var payload = new JsonObject
+        {
+            ["model"] = model,
+            ["messages"] = messages,
+            ["max_tokens"] = 512,
+            ["temperature"] = 0.3
+        };
+
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Post, BuildUrl())
+            {
+                Content = new StringContent(payload.ToJsonString(), Encoding.UTF8, "application/json")
+            };
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _settings.ApiKey.Trim());
+            using var response = await Http.SendAsync(request, ct);
+            var body = await response.Content.ReadAsStringAsync(ct);
+            if (!response.IsSuccessStatusCode)
+            {
+                Services.FileLog.Warn("Agent", $"[Music] 音频识别模型 {model} 返回 {(int)response.StatusCode}：{Truncate(body, 160)}");
+                return null;
+            }
+
+            using var doc = JsonDocument.Parse(body);
+            var content = doc.RootElement.GetProperty("choices")[0].GetProperty("message").GetProperty("content").GetString()?.Trim();
+            if (string.IsNullOrWhiteSpace(content))
+            {
+                return null;
+            }
+
+            // 模型说它听不到（模型/链路不支持音频）→ 当作“没听到”，别把这句话当听感塞进上下文
+            if (content.Contains("听不到", StringComparison.Ordinal) || content.Contains("无法接收", StringComparison.Ordinal) ||
+                content.Contains("无法播放", StringComparison.Ordinal) || content.Contains("没有声音", StringComparison.Ordinal))
+            {
+                Services.FileLog.Warn("Agent", $"[Music] 音频识别模型 {model} 声称听不到音频（该模型/链路可能不支持 input_audio）");
+                return null;
+            }
+
+            Services.FileLog.Write("Agent", $"[Music] {model} 听感：{Truncate(content, 200)}");
+            return content;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            Services.FileLog.Warn("Agent", $"[Music] 音频识别请求失败（{model}）: {ex.Message}");
+            return null;
+        }
+    }
+
     private string BuildUrl()
     {
         var url = _settings.ModelBaseUrl.Trim().TrimEnd('/');

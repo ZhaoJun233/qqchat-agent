@@ -535,6 +535,8 @@ public sealed class WebUiServer : IDisposable
         if (body["musicLibraryMax"] is JsonNode mml) s.MusicLibraryMax = Math.Clamp(mml.GetValue<int>(), 10, 5000);
         if (body["musicNoteTtlDays"] is JsonNode mnt) s.MusicNoteTtlDays = Math.Clamp(mnt.GetValue<int>(), 1, 365);
         if (body["musicListenCooldownSeconds"] is JsonNode mlc) s.MusicListenCooldownSeconds = Math.Clamp(mlc.GetValue<int>(), 0, 86400);
+        if (body["musicUnderstandModel"] is JsonNode mum) s.MusicUnderstandModel = mum.GetValue<string>().Trim();
+        if (body["musicSendAudioToModel"] is JsonNode msa) s.MusicSendAudioToModel = msa.GetValue<bool>();
         if (body["musicKeepAudio"] is JsonNode mka) s.MusicKeepAudio = mka.GetValue<bool>();
         if (body["enableStickers"] is JsonNode es) s.EnableStickers = es.GetValue<bool>();
             if (body["stickerLibraryMax"] is JsonNode slm) s.StickerLibraryMax = Math.Clamp(slm.GetValue<int>(), 0, 2000);
@@ -900,6 +902,9 @@ public sealed class WebUiServer : IDisposable
         ["musicLibraryMax"] = s.MusicLibraryMax,
         ["musicNoteTtlDays"] = s.MusicNoteTtlDays,
         ["musicListenCooldownSeconds"] = s.MusicListenCooldownSeconds,
+        ["musicUnderstandModel"] = s.MusicUnderstandModel,
+        ["musicSendAudioToModel"] = s.MusicSendAudioToModel,
+        ["musicAudioToModelMaxKb"] = s.MusicAudioToModelMaxKb,
         ["musicKeepAudio"] = s.MusicKeepAudio,
         ["neteaseCookieSet"] = !string.IsNullOrWhiteSpace(s.NeteaseCookie),
         ["enableStickers"] = s.EnableStickers,

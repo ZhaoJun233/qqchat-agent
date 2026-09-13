@@ -394,6 +394,17 @@
             </div>
           </div>
 
+          <div class="field">
+            <label>音频识别模型<span class="hint">专门用来“听”的模型（留空 = 不听，只用波形实测）。实测 gemini-3.7-flash-high / gemini-3-flash 能听到声音，而主模型 gemini-3.8-flash-high 收不到音频</span></label>
+            <input type="text" id="setMusicUnderstandModel" maxlength="80" placeholder="gemini-3.7-flash-high" />
+          </div>
+
+          <label class="switch-row">
+            <input type="checkbox" id="setMusicSendAudio" />
+            <span class="switch"></span>
+            <span>把音频片段交给它听<span class="hint">关掉就只用波形实测（响度/动态/BPM/段落）</span></span>
+          </label>
+
           <label class="switch-row">
             <input type="checkbox" id="setMusicKeepAudio" />
             <span class="switch"></span>

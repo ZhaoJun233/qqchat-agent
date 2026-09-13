@@ -1,3 +1,4 @@
+using QQChatAgent.Services.Agent;
 using System.Text.RegularExpressions;
 
 namespace QQChatAgent.Services.Music;
@@ -19,16 +20,18 @@ public sealed partial class MusicService
     private readonly MusicStore _store;
     private readonly NeteaseMusicClient _netease;
     private readonly MusicAudioResolver _audio;
+    private readonly OpenAiClient _brain;
     private readonly Func<AppSettings> _settings;
     private readonly Action<string> _log;
     private readonly string _audioDir;
 
-    public MusicService(MusicStore store, NeteaseMusicClient netease, MusicAudioResolver audio,
+    public MusicService(MusicStore store, NeteaseMusicClient netease, MusicAudioResolver audio, OpenAiClient brain,
         Func<AppSettings> settings, string audioDir, Action<string> log)
     {
         _store = store;
         _netease = netease;
         _audio = audio;
+        _brain = brain;
         _settings = settings;
         _audioDir = audioDir;
         _log = log;
@@ -95,6 +98,19 @@ public sealed partial class MusicService
                 {
                     features = analysed.Description;
                     _log($"[Music] 听过「{title}」：{analysed.Description}（音源：{audio.SourceLabel}，{audio.Data.Length / 1024}KB）");
+
+                    // 再让**专门的音频识别模型**亲耳听一遍：
+                    // 手写 DSP 只能给出响度/动态/BPM/段落这些数字，曲风、编配、人声、情绪得靠真能听到声音的模型。
+                    var heard = await _brain.DescribeAudioAsync(audio.Data, AudioFormat(audio.Data), title, artist, ct);
+                    if (!string.IsNullOrWhiteSpace(heard))
+                    {
+                        features = "模型听感：" + heard.Trim() + "\n波形实测：" + analysed.Description;
+                    }
+                    else
+                    {
+                        _log("[Music] 音频识别模型没给出听感（未配置/不支持音频/请求失败）→ 只用波形实测数据");
+                    }
+
                     if (settings.MusicKeepAudio)
                     {
                         KeepAudio(key, audio);
@@ -154,6 +170,19 @@ public sealed partial class MusicService
         return null;
     }
 
+    /// <summary>音频格式（喂给模型时要说清楚）：按文件头判断。</summary>
+    private static string AudioFormat(byte[] data)
+    {
+        if (data.Length > 4 && data[0] == 'R' && data[1] == 'I' && data[2] == 'F' && data[3] == 'F')
+        {
+            return "wav";
+        }
+
+        return data.Length > 3 && data[0] == 'O' && data[1] == 'g' && data[2] == 'g'
+            ? "ogg"
+            : "mp3";
+    }
+
     /// <summary>分析完的音频要留档时才落盘（默认不留 —— 服务器上不攒版权内容）。</summary>
     private void KeepAudio(string key, MusicAudio audio)
     {
@@ -193,8 +222,8 @@ public sealed partial class MusicService
 
         sb.Append("。\n");
         sb.Append(features is { Length: > 0 }
-            ? "波形实测：" + features + "\n"
-            : "（这首歌没能拿到音源做波形分析，只能看歌词。）\n");
+            ? features + "\n"
+            : "（这首歌没能拿到音源做分析，只能看歌词。）\n");
 
         if (lyric.Length > 0)
         {

@@ -283,7 +283,7 @@ public sealed class BotAgent : IDisposable
             () => Math.Clamp(_settings.MusicBitrate, 32, 320),
             () => Math.Clamp(_settings.MusicMaxDownloadMb, 1, 64) * 1024 * 1024,
             EmitLog);
-        _music = new MusicService(store, netease, audio, () => _settings, Path.Combine(dataDir, "audio"), EmitLog);
+        _music = new MusicService(store, netease, audio, _brain, () => _settings, Path.Combine(dataDir, "audio"), EmitLog);
         _links = new LinkPreviewer(_musicHttp, () => _settings, EmitLog);
     }
 

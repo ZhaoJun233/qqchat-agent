@@ -199,6 +199,19 @@ public sealed class AppSettings
     /// <summary>模型想听一首歌时的最小间隔（秒），防同一个话题反复搜歌；0 = 不限。</summary>
     public int MusicListenCooldownSeconds { get; set; } = 120;
 
+    /// <summary>
+    /// 专门用来“听”的音频识别模型（留空 = 不听，只用手写 DSP 的客观数据）。
+    /// 为什么要单独配：主模型实测收不到音频（代理会静默丢掉），
+    /// 而 gemini-3.7-flash-high / gemini-3-flash 这类是真的能听到声音的。
+    /// </summary>
+    public string MusicUnderstandModel { get; set; } = "gemini-3.7-flash-high";
+
+    /// <summary>是否把音频片段交给上面的音频识别模型（关掉 = 只用 DSP 实测数据）。</summary>
+    public bool MusicSendAudioToModel { get; set; } = true;
+
+    /// <summary>交给模型的音频最多多少 KB（默认 1MB ≈ 60 秒 128kbps）。</summary>
+    public int MusicAudioToModelMaxKb { get; set; } = 1024;
+
     /// <summary>是否把下载的音频留在 data/music/audio（默认不留：服务器上不攒版权内容）。</summary>
     public bool MusicKeepAudio { get; set; }
 
