@@ -96,21 +96,21 @@ public sealed class MockMusicHost : IDisposable
             byte[] body;
             string contentType;
 
-            if (path.StartsWith("/api/song/detail", StringComparison.Ordinal))
+            if (path.StartsWith("/api/song/detail", StringComparison.Ordinal) || path.StartsWith("/song/detail", StringComparison.Ordinal))
             {
                 Interlocked.Increment(ref _apiHits);
                 body = Encoding.UTF8.GetBytes(
                     $$"""{"songs":[{"name":"{{Title}}","duration":45000,"album":{"name":"测试专辑"},"artists":[{"name":"{{Artist}}"}]}]}""");
                 contentType = "application/json";
             }
-            else if (path.StartsWith("/api/search/get", StringComparison.Ordinal))
+            else if (path.StartsWith("/api/search/get", StringComparison.Ordinal) || path.StartsWith("/search", StringComparison.Ordinal))
             {
                 Interlocked.Increment(ref _searchHits);
                 body = Encoding.UTF8.GetBytes(
                     "{\"result\":{\"songs\":[{\"id\":999001,\"name\":\"" + Title + "\",\"duration\":45000,\"artists\":[{\"name\":\"" + Artist + "\"}]}]}}");
                 contentType = "application/json";
             }
-            else if (path.StartsWith("/api/song/lyric", StringComparison.Ordinal))
+            else if (path.StartsWith("/api/song/lyric", StringComparison.Ordinal) || path.StartsWith("/lyric", StringComparison.Ordinal))
             {
                 Interlocked.Increment(ref _apiHits);
                 body = Encoding.UTF8.GetBytes(
@@ -119,6 +119,17 @@ public sealed class MockMusicHost : IDisposable
                         ["lrc"] = new Dictionary<string, object> { ["lyric"] = Lyric },
                         ["tlyric"] = new Dictionary<string, object> { ["lyric"] = string.Empty },
                     }));
+                contentType = "application/json";
+            }
+            // 自建 Enhanced API 的音频地址接口：/song/url/v1?id=…&level=standard
+            else if (path.StartsWith("/song/url", StringComparison.Ordinal))
+            {
+                var idText = System.Text.RegularExpressions.Regex.Match(path + "?", "[?&]id=(\\d+)").Groups[1].Value;
+                var id = long.TryParse(idText, out var parsed) ? parsed : 0;
+                var playable = AudioSongIds.Contains(id);
+                body = Encoding.UTF8.GetBytes(
+                    "{\"data\":[{\"id\":" + id + ",\"url\":" +
+                    (playable ? "\"http://127.0.0.1:" + _port + "/audio/" + id + ".mp3\"" : "null") + ",\"code\":" + (playable ? 200 : 404) + "}]}");
                 contentType = "application/json";
             }
             else if (path.StartsWith("/audio/", StringComparison.Ordinal))

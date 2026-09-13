@@ -19,6 +19,14 @@ public interface IQqChatSource
 
     bool IsConnected { get; }
 
+    /// <summary>
+    /// 发一张音乐分享卡片（OneBot 的 music 段）。
+    /// platform=163 就是网易云：QQ 客户端会渲染成可点开播放的音乐卡片。
+    /// 默认实现返回 false —— 不是每个协议端都支持，上层要能优雅降级。
+    /// </summary>
+    Task<bool> SendMusicAsync(bool isGroup, long targetId, string platform, string songId, CancellationToken ct = default)
+        => Task.FromResult(false);
+
     /// <summary>向群聊/私聊发送纯文本。成功返回 true。replyToMessageId 用于触发 QQ 的"回复"引用。</summary>
     Task<bool> SendTextAsync(bool isGroup, long targetId, string text, CancellationToken ct = default, long? replyToMessageId = null);
 

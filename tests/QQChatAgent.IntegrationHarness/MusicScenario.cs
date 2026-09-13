@@ -69,6 +69,9 @@ public static partial class Program
 
         // ---- 1) 群友分享一首能拿到音源的歌 ----
         openAi.ClearRequests();
+        // 现在听歌是两段：① 音频识别模型的“听感”，② 带着听感+波形数据回复群里。
+        // 脚本回复是 FIFO 的，顺序不能反。
+        openAi.EnqueueReply("我听到的是一首中速流行曲：钢琴前奏、弦乐铺底，女声温润。");
         openAi.EnqueueReply("""{"suitability": 92, "reply": "这首副歌一进来就亮了。"}""");
         await protocol.SendGroupMusicAsync(groupId, 30011, "小美", songWithAudio, 9301, ct: cts.Token);
 
@@ -89,6 +92,16 @@ public static partial class Program
 
         var note = noteRequest ?? string.Empty;
         Check("★ 提示词带上了歌名与歌手", note.Contains(music.Title) && note.Contains(music.Artist));
+
+        // 音频识别模型那段：请求里必须真的带了音频（input_audio + base64），听感必须进了上下文
+        var audioReq = openAi.Requests.Select((_, i) => openAi.DescribeRequest(i))
+            .FirstOrDefault(r => r.Contains("input_audio"));
+        Check("★ 音频真的以 input_audio 交给音频识别模型听（带 base64）",
+            audioReq is not null, audioReq is null ? "(没有带音频的请求)" : "已带音频");
+        Check("★ 模型的听感进了提示词（不是只有分贝数）",
+            note.Contains("模型听感") && note.Contains("中速流行曲"));
+        Check("★ 听感与波形实测并列给出（定性 + 定量互相校验）",
+            note.Contains("模型听感") && note.Contains("波形实测") && note.Contains("BPM"));
         Check("★ 提示词带上了时长（来自网易云详情接口）", note.Contains("时长 0:45"));
         Check("★ 假音源真的被下载（不是只查了接口）", music.AudioHits >= 1, $"audioHits={music.AudioHits}");
         Check("★ 网易云详情/歌词接口都被访问过", music.ApiHits >= 2, $"apiHits={music.ApiHits}");
@@ -172,6 +185,23 @@ public static partial class Program
         Check("★ 听完后带着歌词与波形实测回来接话（而不是只回一句“我去听听”）",
             afterListen is not null && afterListen.Contains("测试歌词第一句"),
             afterListen is null ? "(没等到听完之后的回复)" : "已把实测数据交给模型");
+
+        // ---- 5) 语境合适时，机器人自己分享一张网易云卡片 ----
+        openAi.ClearRequests();
+        openAi.EnqueueReply("""{"suitability": 90, "reply": "来一首这个。", "shareSong": "测试小夜曲 测试歌手"}""");
+        await protocol.SendGroupMessageAsync(groupId, 30015, "小美",
+            "@10001 推荐首歌", 9309, mentionBot: true, ct: cts.Token);
+        await Task.Delay(6000);
+
+        var musicCard = protocol.ActionsReceived
+            .Where(a => a["action"]?.GetValue<string>() == "send_group_msg")
+            .Select(a => a.ToJsonString())
+            .LastOrDefault(t => t.Contains("\"music\""));
+        Check("★ 语境合适时机器人自己分享音乐卡片（发的是 music 段，不是纯文字）",
+            musicCard is not null, musicCard is null ? "(没发出卡片)" : "已发出卡片");
+        Check("★ 卡片是网易云（type=163）且带上了搜到的歌曲 id",
+            musicCard is not null && musicCard.Contains("163") && musicCard.Contains("999001"),
+            musicCard is null ? "(无)" : musicCard.Substring(Math.Max(0, musicCard.Length - 160)));
     }
 
     /// <summary>等一条满足条件的模型请求（返回请求全文，超时返回 null）。</summary>

@@ -108,6 +108,24 @@ public sealed class OneBotGateway : IQqChatSource, IDisposable
     }
 
     /// <summary>
+    /// 发一张音乐分享卡片（OneBot music 段）。type=163 → 网易云；QQ 客户端会渲染成可播放卡片。
+    /// 这是机器人“主动分享一首歌”的出路 —— 不是每次都只能发一段文字。
+    /// </summary>
+    public async Task<bool> SendMusicAsync(bool isGroup, long targetId, string platform, string songId, CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(songId))
+        {
+            return false;
+        }
+
+        var action = isGroup ? "send_group_msg" : "send_private_msg";
+        var key = isGroup ? "group_id" : "user_id";
+        var music = $"{{\"type\":\"music\",\"data\":{{\"type\":{Json(platform)},\"id\":{Json(songId)}}}}}";
+        var result = await SendActionAsync(action, $"{{\"{key}\":{targetId},\"message\":[{music}]}}", ct);
+        return result is not null && GetRetcode(result) == 0;
+    }
+
+    /// <summary>
     /// 发送一张图片（表情包）。
     /// 用 base64:// 而不是本地路径：机器人容器里的 /data/stickers 不在 NapCat 容器里，
     /// 而 base64 不依赖协议端的文件访问权限（NapCat 原生支持 base64://）。

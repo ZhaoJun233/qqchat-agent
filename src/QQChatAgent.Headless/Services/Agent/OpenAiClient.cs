@@ -138,7 +138,11 @@ public sealed class OpenAiClient
                 "群里让你听/放某首歌，或者你想就某首歌接话但没把握时，在 JSON 里加 listen 字段写上歌名（带歌手更好）：" +
                 "{\"suitability\": 85, \"reply\": \"我去听听\", \"listen\": \"洛天依 if love == true\"}。\n" +
                 "机器人会去网易云搜这首歌、下一份低码率音频做波形分析，然后把歌词和实测数据给你 —— 下一轮你就能真的聊这首歌了。\n" +
-                "listen 只在确实需要“听过”时用（同一首歌不要反复请求），也别拿它当通用搜索框。";
+                "listen 只在确实需要“听过”时用（同一首歌不要反复请求），也别拿它当通用搜索框。\n" +
+                "另外，语境合适时可以**主动分享**一首歌给群里（有人要推荐、聊到某首歌、气氛适合来一首），" +
+                "在 JSON 里加 shareSong 字段写歌名（带歌手更好），机器人会搜到后发一张网易云音乐卡片：" +
+                "{\"suitability\": 85, \"reply\": \"来一首这个\", \"shareSong\": \"起风了 买辣椒也用券\"}。" +
+                "分享要克制：别反复推同一首，也别每轮都发卡片（卡片比文字“重”得多）。";
         }
 
         // 被戳过才给的指令：戳回去是**可选**动作，看当下心情 —— 不必每次被戳都戳一次
@@ -430,6 +434,17 @@ public sealed class OpenAiClient
                 }
             }
 
+            // 模型想把某首歌分享给群里（发一张网易云卡片）：“推荐首歌/点歌/聊到某首歌”这类语境
+            string? shareSong = null;
+            if ((root.TryGetProperty("shareSong", out var ss) || root.TryGetProperty("share_song", out ss)) && ss.ValueKind == JsonValueKind.String)
+            {
+                var want = ss.GetString()?.Trim();
+                if (!string.IsNullOrWhiteSpace(want) && want.Length is >= 2 and <= 60)
+                {
+                    shareSong = want;
+                }
+            }
+
             // 模型顺手写的心情（≤ 24 字）：存起来给下一轮用；太长/非字符串一律忽略
             string? mood = null;
             if (root.TryGetProperty("mood", out var md) && md.ValueKind == JsonValueKind.String)
@@ -437,7 +452,7 @@ public sealed class OpenAiClient
                 mood = md.GetString()?.Trim();
             }
 
-            return new CompletionResult(suitability, string.IsNullOrWhiteSpace(reply) ? null : reply, rawReply, stickerId, replyToId, pokeTargetId, mood, listen);
+            return new CompletionResult(suitability, string.IsNullOrWhiteSpace(reply) ? null : reply, rawReply, stickerId, replyToId, pokeTargetId, mood, listen, shareSong);
         }
         catch (JsonException)
         {
@@ -1134,7 +1149,8 @@ public readonly record struct StickerChoice(string Id, string Description);
 /// <param name="PokeTargetId">模型想戳的人的 QQ 号（对应提示里的 poke 字段）；null = 不戳。</param>
 /// <param name="Mood">模型顺手写的“我现在的心情”（≤ 24 字）；null = 没写。</param>
 /// <param name="Listen">模型想“听一听”的歌名/歌手（机器人会去搜索并分析波形）；null = 不想听。</param>
-public readonly record struct CompletionResult(int? Suitability, string? Reply, string? RawText, string? StickerId = null, long? ReplyToMessageId = null, long? PokeTargetId = null, string? Mood = null, string? Listen = null);
+/// <param name="ShareSong">模型想分享给群里的歌（机器人搜到后发一张网易云卡片）；null = 不分享。</param>
+public readonly record struct CompletionResult(int? Suitability, string? Reply, string? RawText, string? StickerId = null, long? ReplyToMessageId = null, long? PokeTargetId = null, string? Mood = null, string? Listen = null, string? ShareSong = null);
 
 /// <summary>图片下载器：把图片 URL 下载并转成 base64 data URL（供多模态模型识图），
 /// 也给表情包库提供原始字节。</summary>

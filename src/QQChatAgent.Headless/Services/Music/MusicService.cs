@@ -43,15 +43,27 @@ public sealed partial class MusicService
     /// </summary>
     public async Task<string?> DescribeByNameAsync(string keyword, string senderName, CancellationToken ct)
     {
-        var share = await _netease.SearchAsync(keyword, ct);
-        if (share is null)
+        var song = await _netease.SearchAsync(keyword, ct);
+        if (song is null)
         {
             return null;
         }
 
-        _log($"[Music] 搜到「{share.Title} - {share.Artist}」(# {share.SongId})，开始听");
-        return await DescribeAsync(share, senderName, ct);
+        _log($"[Music] 搜到「{song.Title} - {song.Artist}」(# {song.SongId})，开始听");
+        return await DescribeAsync(song, senderName, ct);
     }
+
+    /// <summary>把歌名解析成歌曲 id（机器人要发分享卡片时用）。</summary>
+    public async Task<string?> ResolveSongIdByNameAsync(string keyword, CancellationToken ct)
+    {
+        var song = await _netease.SearchAsync(keyword, ct);
+        return song?.SongId;
+    }
+
+    /// <summary>
+    /// 按歌名搜歌并返回可用的分享对象（机器人自己发卡片时用）。
+    /// </summary>
+    public Task<MusicShare?> SearchAsync(string keyword, CancellationToken ct) => _netease.SearchAsync(keyword, ct);
 
     /// <summary>
     /// 处理一条分享：返回要注入上下文的“事实描述”；完全没信息时返回 null。

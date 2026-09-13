@@ -1953,6 +1953,48 @@ public sealed class BotAgent : IDisposable
             }
         }
 
+        // 模型想把某首歌分享给群里 → 搜到就发一张网易云卡片，顺手“听”一遍（下一轮它就能聊这首歌）。
+        if (_settings.EnableMusic && result.ShareSong is { Length: > 0 } songToShare && _music is not null)
+        {
+            var key = conversation.SourceKey;
+            var (shareIsGroup, shareTargetId) = conversation.Target;
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    if (shareTargetId == 0 || !_source.IsConnected)
+                    {
+                        return;
+                    }
+
+                    var songId = await _music.ResolveSongIdByNameAsync(songToShare, CancellationToken.None);
+                    if (string.IsNullOrWhiteSpace(songId))
+                    {
+                        EmitLog($"[Music] 想分享「{songToShare}」但没搜到，不发卡片");
+                        return;
+                    }
+
+                    var ok = await _source.SendMusicAsync(shareIsGroup, shareTargetId, "163", songId, CancellationToken.None);
+                    EmitLog(ok ? $"[Music] 已分享卡片「{songToShare}」(# {songId})" : $"[Music] 卡片发送失败（协议端可能不支持）: {songToShare}");
+                    if (!ok)
+                    {
+                        return;
+                    }
+
+                    // 卡片发出去了，接着真去听一遍：下一轮发言时它就“听过这首歌”
+                    var note = await _music.DescribeByNameAsync(songToShare, "（自己分享的）", CancellationToken.None);
+                    if (!string.IsNullOrWhiteSpace(note) && !_musicNotes.ContainsKey(key))
+                    {
+                        _musicNotes[key] = note!;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    EmitLog($"[Music] 分享「{songToShare}」失败: {ex.Message}");
+                }
+            });
+        }
+
         if (_settings.EnableStickers && result.StickerId is { } sid)
         {
             sticker = _stickers.Find(sid);
