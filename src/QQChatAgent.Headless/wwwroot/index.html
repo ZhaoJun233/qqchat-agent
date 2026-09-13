@@ -348,6 +348,56 @@
           </div>
         </div>
 
+        <!-- 听音乐 -->
+        <div class="card">
+          <div class="card-head">
+            <h3>听音乐</h3>
+            <p>有人在群里分享歌（网易云歌曲卡片/链接）时，机器人会去查歌名与歌词、下一份<b>低码率</b>音频，
+              自己分析波形（响度/动态/速度/段落起伏），再拿着这些实测事实跟群友接话。</p>
+          </div>
+
+          <label class="switch-row">
+            <input type="checkbox" id="setEnableMusic" />
+            <span class="switch"></span>
+            <span>启用听音乐（自动查歌词 + 波形分析）</span>
+          </label>
+
+          <div class="field">
+            <label>音源模板<span class="hint">分号分隔、按顺序尝试；占位符 {id} {br} {crc32}。公开音源随时会挂，挂了就在这换一条</span></label>
+            <textarea id="setMusicSources" rows="3" spellcheck="false"></textarea>
+          </div>
+
+          <div class="grid-2">
+            <div class="field">
+              <label>下载码率（kbps）<span class="hint">低码率足够分析波形，也省流量</span></label>
+              <input type="number" id="setMusicBitrate" min="32" max="320" step="32" />
+            </div>
+            <div class="field">
+              <label>单文件上限（MB）<span class="hint">超过就跳过这条音源</span></label>
+              <input type="number" id="setMusicMaxMb" min="1" max="64" step="1" />
+            </div>
+            <div class="field">
+              <label>分析时长上限（秒）<span class="hint">超出的部分截断，控制 CPU</span></label>
+              <input type="number" id="setMusicAnalysisSeconds" min="20" max="600" step="10" />
+            </div>
+            <div class="field">
+              <label>台账上限（首）<span class="hint">“听过的歌”保留多少条</span></label>
+              <input type="number" id="setMusicLibraryMax" min="10" max="5000" step="10" />
+            </div>
+            <div class="field">
+              <label>分析结果保留（天）<span class="hint">过期会重新分析一次</span></label>
+              <input type="number" id="setMusicNoteTtlDays" min="1" max="365" step="1" />
+            </div>
+          </div>
+
+          <label class="switch-row">
+            <input type="checkbox" id="setMusicKeepAudio" />
+            <span class="switch"></span>
+            <span>保留下载的音频<span class="hint">默认分析完就删；打开后留在 data/music/audio</span></span>
+          </label>
+          <p class="path-hint" id="musicHint"></p>
+        </div>
+
         <!-- 戳一戳 -->
         <div class="card">
           <div class="card-head">

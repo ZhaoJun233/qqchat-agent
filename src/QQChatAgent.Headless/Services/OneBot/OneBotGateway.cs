@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using QQChatAgent.Services.Music;
 using QQChatAgent.Services.Qq;
 
 namespace QQChatAgent.Services.OneBot;
@@ -268,7 +269,7 @@ public sealed class OneBotGateway : IQqChatSource, IDisposable
             var messageId = root["message_id"]?.GetValue<long>() ?? 0;
             var time = root["time"]?.GetValue<long>() ?? 0;
             var raw = root["raw_message"]?.GetValue<string>();
-            var (text, mentioned, historyImages) = ParseMessage(root["message"] as JsonArray, raw, selfId);
+            var (text, mentioned, historyImages, _) = ParseMessage(root["message"] as JsonArray, raw, selfId);
             var sender = root["sender"] is JsonObject so
                 ? (string.IsNullOrWhiteSpace(so["card"]?.GetValue<string>())
                     ? so["nickname"]?.GetValue<string>() ?? userId.ToString()
@@ -577,7 +578,7 @@ public sealed class OneBotGateway : IQqChatSource, IDisposable
             : null;
 
         var raw = root["raw_message"]?.GetValue<string>();
-        var (text, mentioned, imageUrls) = ParseMessage(root["message"] as JsonArray, raw, selfId);
+        var (text, mentioned, imageUrls, musicShares) = ParseMessage(root["message"] as JsonArray, raw, selfId);
 
         var senderName = sender is null
             ? (isGroup ? $"成员 {userId}" : userId.ToString())
@@ -585,7 +586,7 @@ public sealed class OneBotGateway : IQqChatSource, IDisposable
                 ? (string.IsNullOrWhiteSpace(sender.Card) ? sender.Nickname ?? userId.ToString() : sender.Card)
                 : sender.Nickname ?? userId.ToString();
 
-        if (string.IsNullOrWhiteSpace(text) && !mentioned)
+        if (string.IsNullOrWhiteSpace(text) && !mentioned && musicShares.Count == 0)
         {
             return; // 只有表情/图片等无文本且未提及本机时不创建会话
         }
@@ -599,15 +600,17 @@ public sealed class OneBotGateway : IQqChatSource, IDisposable
             text,
             DateTimeOffset.FromUnixTimeSeconds(time),
             mentioned,
-            imageUrls.Count > 0 ? imageUrls : null));
+            imageUrls.Count > 0 ? imageUrls : null,
+            musicShares.Count > 0 ? musicShares : null));
     }
 
     /// <summary>解析消息成纯文本；数组段（text/at/image…）或 raw_message（CQ 码）均支持。</summary>
-    private static (string Text, bool Mentioned, List<string> ImageUrls) ParseMessage(JsonArray? segments, string? rawMessage, long selfId)
+    private static (string Text, bool Mentioned, List<string> ImageUrls, List<MusicShare> MusicShares) ParseMessage(JsonArray? segments, string? rawMessage, long selfId)
     {
         var sb = new System.Text.StringBuilder();
         var mentioned = false;
         var imageUrls = new List<string>();
+        var musicShares = new List<MusicShare>();
 
         if (segments is not null && segments.Count > 0)
         {
@@ -675,8 +678,18 @@ public sealed class OneBotGateway : IQqChatSource, IDisposable
                     case "video":
                         sb.Append("[视频]");
                         break;
-                    case "reply":
+                    case "music":
                     case "json":
+                        // 音乐分享：OneBot 的 music 段（带平台+id）或 QQ 客户端的新版 json 卡片。
+                        // 这两种段以前直接被丢掉，机器人只见一个空消息 —— 现在把歌认出来。
+                        if (MusicShareParser.TryParseSegment(seg) is { } share)
+                        {
+                            musicShares.Add(share);
+                            sb.Append("[音乐分享:").Append(share.Title ?? share.SongId ?? share.Platform).Append(']');
+                        }
+
+                        break;
+                    case "reply":
                     case "forward":
                     case "file":
                         break;
@@ -685,15 +698,29 @@ public sealed class OneBotGateway : IQqChatSource, IDisposable
                 }
             }
 
-            return (sb.ToString().Trim(), mentioned, imageUrls);
+            var text = sb.ToString().Trim();
+            if (musicShares.Count == 0 && MusicShareParser.TryParseText(text) is { } fromText)
+            {
+                // 手动粘的分享链接（网易云短链/长链）也算
+                musicShares.Add(fromText);
+            }
+
+            return (text, mentioned, imageUrls, musicShares);
         }
 
         if (rawMessage is not null)
         {
-            return (StripCqCode(rawMessage, selfId, out mentioned), mentioned, imageUrls);
+            var text = StripCqCode(rawMessage, selfId, out mentioned);
+            var sharesFromRaw = new List<MusicShare>();
+            if (MusicShareParser.TryParseText(rawMessage) is { } fromRaw)
+            {
+                sharesFromRaw.Add(fromRaw);
+            }
+
+            return (text, mentioned, imageUrls, sharesFromRaw);
         }
 
-        return (string.Empty, false, imageUrls);
+        return (string.Empty, false, imageUrls, musicShares);
     }
 
     /// <summary>把 CQ 码文本转成可读文本：[CQ:at,qq=123] 保留 @ 目标，图片/表情等替换为占位。</summary>

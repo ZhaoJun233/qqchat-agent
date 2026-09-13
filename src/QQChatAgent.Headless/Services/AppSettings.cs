@@ -151,6 +151,50 @@ public sealed class AppSettings
     /// <summary>同时向模型发起的最大请求数（按会话串行、跨会话并发）。</summary>
     public int MaxConcurrentReplies { get; set; } = 2;
 
+    // ---------- 听音乐（识别群里的音乐分享 + 网易云歌词 + 波形分析） ----------
+
+    /// <summary>启用“听音乐”：有人分享歌时，自动查歌词、下一份低码率音频分析波形，再交模型接话。</summary>
+    public bool EnableMusic { get; set; } = true;
+
+    /// <summary>
+    /// 音源模板（分号分隔，按顺序尝试）。占位符：{id} 歌曲 id、{br} 码率、{crc32} 标准 CRC32 的 8 位大写十六进制。
+    /// 这类公开音源都是第三方服务，随时会挂、会改参数 —— 所以做成可配置：挂了就在面板里换一条，不用改代码。
+    /// </summary>
+    public string MusicSources { get; set; } =
+        "meting|https://api.qijieya.cn/meting/?type=url&id={id}&br={br};" +
+        "gdstudio|https://music-api.gdstudio.xyz/api.php?types=url&source=netease&id={id}&br={br}&s={crc32}";
+
+    /// <summary>下载音频的码率（低码率足够分析波形，也省流量）。</summary>
+    public int MusicBitrate { get; set; } = 128;
+
+    /// <summary>
+    /// 网易云接口地址（默认官方）。做成可配置是为了能指向自建代理或测试用的假接口；
+    /// 服务器在海外时官方接口的音频部分会被地域限制，但歌词/详情没问题。
+    /// </summary>
+    public string NeteaseBaseUrl { get; set; } = "https://music.163.com";
+
+    /// <summary>单个音频文件体积上限（MB），超过就跳过该音源。</summary>
+    public int MusicMaxDownloadMb { get; set; } = 12;
+
+    /// <summary>最多分析多少秒（超出部分截断，控制 CPU）。</summary>
+    public int MusicMaxAnalysisSeconds { get; set; } = 180;
+
+    /// <summary>“听过的歌”台账上限（条）。</summary>
+    public int MusicLibraryMax { get; set; } = 300;
+
+    /// <summary>分析结果保留天数：超过就重新分析一次（音源/算法可能变过）。</summary>
+    public int MusicNoteTtlDays { get; set; } = 30;
+
+    /// <summary>是否把下载的音频留在 data/music/audio（默认不留：服务器上不攒版权内容）。</summary>
+    public bool MusicKeepAudio { get; set; }
+
+    /// <summary>
+    /// 网易云 Cookie（可选）：带上登录态能少踩一些接口限制。
+    /// 属于密钥，环境变量专属（QQCHAT_NETEASE_COOKIE），不写入 settings.json、面板只显示是否已设置。
+    /// </summary>
+    [JsonIgnore]
+    public string NeteaseCookie { get; set; } = string.Empty;
+
     // ---------- 运维 ----------
 
     /// <summary>面板访问令牌（可空）。设置后访问面板与 /api/* 需携带令牌；

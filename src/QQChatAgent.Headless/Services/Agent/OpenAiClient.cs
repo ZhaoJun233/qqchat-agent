@@ -46,7 +46,7 @@ public sealed class OpenAiClient
     /// 网络/接口异常向上抛，由调用方记日志。
     /// </summary>
     public async Task<CompletionResult> CompleteAsync(IReadOnlyList<ChatMessage> context, string? profilesText = null, CancellationToken ct = default,
-        IReadOnlyList<StickerChoice>? stickers = null, bool pokeContext = false, string? moodText = null)
+        IReadOnlyList<StickerChoice>? stickers = null, bool pokeContext = false, string? moodText = null, string? musicText = null)
     {
         if (string.IsNullOrWhiteSpace(_settings.ApiKey))
         {
@@ -110,6 +110,16 @@ public sealed class OpenAiClient
             systemContent +=
                 "\n\n[你此刻的心情]\n" + moodText.Trim() +
                 "\n（心情只影响你说话的语气与热络程度：烦的时候就短、敷衽、甚至懒得理；心情好可以开玩笑。别把它当成要宣告的信息。）";
+        }
+
+        // 群里刚分享的音乐：把“实测到的事实 + 歌词”交给模型，让它聊得像真听过（而不是望着歌名编）
+        if (!string.IsNullOrWhiteSpace(musicText))
+        {
+            systemContent +=
+                "\n\n[群里刚分享的音乐]\n" + musicText.Trim() +
+                "\n（这是你刚“听”过的一首歌：可以就节奏/旋律/歌词/年代感聊两句，或顺着群友的话接。" +
+                "歌名、歌手、时长、BPM、响度、段落这些事实一律以上面的实测数据为准，不要另编；" +
+                "歌词里没有的内容不要虚构，也别把整段歌词抰出来 —— 引用一两句点到即止，像真的听过那样随口提。）";
         }
 
         // 被戳过才给的指令：戳回去是**可选**动作，看当下心情 —— 不必每次被戳都戳一次

@@ -44,7 +44,8 @@ public sealed record QqChatMessage(
     string Text,
     DateTimeOffset Time,
     bool MentionedSelf,
-    IReadOnlyList<string>? ImageUrls = null);
+    IReadOnlyList<string>? ImageUrls = null,
+    IReadOnlyList<QQChatAgent.Services.Music.MusicShare>? MusicShares = null);
 
 /// <summary>
 /// 戳一戳事件（OneBot v11：post_type=notice）。

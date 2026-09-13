@@ -847,6 +847,15 @@
     $("setMood").value = r.mood || "";
     $("setMoodTtl").value = r.moodTtlSeconds;
     $("moodHint").textContent = r.moodSummary ? "现在：" + r.moodSummary : "";
+    $("setEnableMusic").checked = r.enableMusic !== false;
+    $("setMusicSources").value = r.musicSources || "";
+    $("setMusicBitrate").value = r.musicBitrate;
+    $("setMusicMaxMb").value = r.musicMaxDownloadMb;
+    $("setMusicAnalysisSeconds").value = r.musicMaxAnalysisSeconds;
+    $("setMusicLibraryMax").value = r.musicLibraryMax;
+    $("setMusicNoteTtlDays").value = r.musicNoteTtlDays;
+    $("setMusicKeepAudio").checked = r.musicKeepAudio === true;
+    $("musicHint").textContent = "网易云 Cookie：" + (r.neteaseCookieSet ? "已设置（环境变量）" : "未设置（可选）");
 
     // NapCat 状态条（对应桌面版 InfoBar）
     const d = connDisplay();
@@ -908,7 +917,15 @@
       enablePoke: $("setEnablePoke").checked,
       pokeCooldownSeconds: Number($("setPokeCooldown").value),
       moodTtlSeconds: Number($("setMoodTtl").value),
-      mood: $("setMood").value.trim()
+      mood: $("setMood").value.trim(),
+      enableMusic: $("setEnableMusic").checked,
+      musicSources: $("setMusicSources").value.trim(),
+      musicBitrate: Number($("setMusicBitrate").value),
+      musicMaxDownloadMb: Number($("setMusicMaxMb").value),
+      musicMaxAnalysisSeconds: Number($("setMusicAnalysisSeconds").value),
+      musicLibraryMax: Number($("setMusicLibraryMax").value),
+      musicNoteTtlDays: Number($("setMusicNoteTtlDays").value),
+      musicKeepAudio: $("setMusicKeepAudio").checked
     };
 
     // 密钥单独处理：输入框留空 = 不改（否则每次保存都会把已存的密钥抹掉）；

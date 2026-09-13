@@ -274,7 +274,15 @@ public sealed class MockOpenAi : IDisposable
     public string DescribeRequest(int index)
     {
         var req = Requests.ElementAtOrDefault(index);
-        return req is null ? "(无请求)" : JsonSerializer.Serialize(req, new JsonSerializerOptions { WriteIndented = true });
+        // 不要转义非 ASCII：断言要能直接拿中文去 Contains（默认编码器会把“波形实测”写成 \u6CE2…，
+        // 一度让“提示词里有没有这句话”查不出来）
+        return req is null
+            ? "(无请求)"
+            : JsonSerializer.Serialize(req, new JsonSerializerOptions
+            {
+                WriteIndented = true,
+                Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping
+            });
     }
 
     public void Dispose()

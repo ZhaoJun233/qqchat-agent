@@ -86,6 +86,7 @@ public static partial class Program
             await Scenario("s19", RunReplyQuoteScenarioAsync);
             await Scenario("s20", RunPokeScenarioAsync);
             await Scenario("s21", RunModelConfigScenarioAsync);
+        await Scenario("s22", RunMusicScenarioAsync);
         }
         catch (Exception ex)
         {

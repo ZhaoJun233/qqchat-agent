@@ -327,6 +327,56 @@ public sealed class MockProtocol : IDisposable
         await SendRawAsync(evt.ToJsonString(), ct);
     }
 
+    /// <summary>发送一条“音乐分享”（OneBot 的 music 段，type=163 就是网易云）。</summary>
+    public async Task SendGroupMusicAsync(
+        long groupId,
+        long userId,
+        string senderName,
+        long songId,
+        long messageId,
+        bool mentionBot = false,
+        CancellationToken ct = default)
+    {
+        var segments = new JsonArray();
+        if (mentionBot)
+        {
+            segments.Add(new JsonObject
+            {
+                ["type"] = "at",
+                ["data"] = new JsonObject { ["qq"] = SelfId.ToString() }
+            });
+        }
+
+        segments.Add(new JsonObject
+        {
+            ["type"] = "music",
+            ["data"] = new JsonObject { ["type"] = "163", ["id"] = songId.ToString() }
+        });
+
+        var evt = new JsonObject
+        {
+            ["post_type"] = "message",
+            ["message_type"] = "group",
+            ["sub_type"] = "normal",
+            ["message_id"] = messageId,
+            ["group_id"] = groupId,
+            ["user_id"] = userId,
+            ["self_id"] = SelfId,
+            ["raw_message"] = $"[CQ:music,type=163,id={songId}]",
+            ["time"] = DateTimeOffset.Now.ToUnixTimeSeconds(),
+            ["message"] = segments,
+            ["sender"] = new JsonObject
+            {
+                ["user_id"] = userId,
+                ["nickname"] = senderName,
+                ["card"] = senderName,
+                ["role"] = "member"
+            }
+        };
+
+        await SendRawAsync(evt.ToJsonString(), ct);
+    }
+
     public async Task SendPrivateMessageAsync(long userId, string senderName, string text, long messageId, CancellationToken ct = default)
     {
         var evt = new JsonObject

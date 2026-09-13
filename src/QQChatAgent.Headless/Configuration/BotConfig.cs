@@ -95,7 +95,16 @@ public static class BotConfig
             [nameof(AppSettings.StickerCooldownSeconds)] = new[] { "QQCHAT_STICKER_COOLDOWN" },
     [nameof(AppSettings.EnablePoke)] = new[] { "QQCHAT_ENABLE_POKE" },
     [nameof(AppSettings.PokeCooldownSeconds)] = new[] { "QQCHAT_POKE_COOLDOWN" },
-    [nameof(AppSettings.MoodTtlSeconds)] = new[] { "QQCHAT_MOOD_TTL" }
+    [nameof(AppSettings.MoodTtlSeconds)] = new[] { "QQCHAT_MOOD_TTL" },
+    [nameof(AppSettings.EnableMusic)] = new[] { "QQCHAT_ENABLE_MUSIC" },
+    [nameof(AppSettings.MusicSources)] = new[] { "QQCHAT_MUSIC_SOURCES" },
+    [nameof(AppSettings.NeteaseBaseUrl)] = new[] { "QQCHAT_NETEASE_BASE_URL" },
+    [nameof(AppSettings.MusicBitrate)] = new[] { "QQCHAT_MUSIC_BITRATE" },
+    [nameof(AppSettings.MusicMaxDownloadMb)] = new[] { "QQCHAT_MUSIC_MAX_MB" },
+    [nameof(AppSettings.MusicMaxAnalysisSeconds)] = new[] { "QQCHAT_MUSIC_ANALYSIS_SECONDS" },
+    [nameof(AppSettings.MusicLibraryMax)] = new[] { "QQCHAT_MUSIC_LIBRARY_MAX" },
+    [nameof(AppSettings.MusicNoteTtlDays)] = new[] { "QQCHAT_MUSIC_NOTE_TTL_DAYS" },
+    [nameof(AppSettings.MusicKeepAudio)] = new[] { "QQCHAT_MUSIC_KEEP_AUDIO" }
         };
 
         if (!seedOnly)
@@ -155,6 +164,16 @@ public static class BotConfig
         s.EnablePoke = Bool("QQCHAT_ENABLE_POKE") ?? s.EnablePoke;
         s.PokeCooldownSeconds = Int("QQCHAT_POKE_COOLDOWN") ?? s.PokeCooldownSeconds;
         s.MoodTtlSeconds = Int("QQCHAT_MOOD_TTL") ?? s.MoodTtlSeconds;
+        s.EnableMusic = Bool("QQCHAT_ENABLE_MUSIC") ?? s.EnableMusic;
+        s.MusicSources = Str("QQCHAT_MUSIC_SOURCES") ?? s.MusicSources;
+        s.NeteaseBaseUrl = Str("QQCHAT_NETEASE_BASE_URL") ?? s.NeteaseBaseUrl;
+        s.MusicBitrate = Int("QQCHAT_MUSIC_BITRATE") ?? s.MusicBitrate;
+        s.MusicMaxDownloadMb = Int("QQCHAT_MUSIC_MAX_MB") ?? s.MusicMaxDownloadMb;
+        s.MusicMaxAnalysisSeconds = Int("QQCHAT_MUSIC_ANALYSIS_SECONDS") ?? s.MusicMaxAnalysisSeconds;
+        s.MusicLibraryMax = Int("QQCHAT_MUSIC_LIBRARY_MAX") ?? s.MusicLibraryMax;
+        s.MusicNoteTtlDays = Int("QQCHAT_MUSIC_NOTE_TTL_DAYS") ?? s.MusicNoteTtlDays;
+        s.MusicKeepAudio = Bool("QQCHAT_MUSIC_KEEP_AUDIO") ?? s.MusicKeepAudio;
+        s.NeteaseCookie = Str("QQCHAT_NETEASE_COOKIE") ?? s.NeteaseCookie;
     }
 
     /// <summary>

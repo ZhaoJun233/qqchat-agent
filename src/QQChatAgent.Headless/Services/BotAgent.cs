@@ -5,6 +5,7 @@ using QQChatAgent.Services.Qq;
 using System.Text;
 
 using QQChatAgent.Services.Stickers;
+using QQChatAgent.Services.Music;
 
 namespace QQChatAgent.Services;
 
@@ -265,6 +266,24 @@ public sealed class BotAgent : IDisposable
     /// </summary>
     /// <summary>把“心情保留多久”从设置同步给 MoodStore（0 = 不过期）。</summary>
     private void ApplyMoodTtl() => _mood.Ttl = TimeSpan.FromSeconds(Math.Max(0, _settings.MoodTtlSeconds));
+
+    /// <summary>
+    /// 组装“听音乐”服务。数据放 data/music/：台账（listened.json）常驻，音频默认分析完就丢
+    /// （只在 MusicKeepAudio 打开时才留在 data/music/audio/）。
+    /// </summary>
+    private void BuildMusicService()
+    {
+        var dataDir = Path.Combine(AppPaths.DataDir, "music");
+        var store = new MusicStore(Path.Combine(dataDir, "listened.json"), () => _settings.MusicLibraryMax, EmitLog);
+        var netease = new NeteaseMusicClient(_musicHttp, () => _settings.NeteaseCookie, () => _settings.NeteaseBaseUrl, EmitLog);
+        var audio = new MusicAudioResolver(
+            _musicHttp,
+            () => _settings.MusicSources.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries),
+            () => Math.Clamp(_settings.MusicBitrate, 32, 320),
+            () => Math.Clamp(_settings.MusicMaxDownloadMb, 1, 64) * 1024 * 1024,
+            EmitLog);
+        _music = new MusicService(store, netease, audio, () => _settings, Path.Combine(dataDir, "audio"), EmitLog);
+    }
 
     /// <summary>
     /// 把模型配置同步给大脑（面板里改 Base URL / 模型名 / 密钥 后调用）。
@@ -757,6 +776,7 @@ public sealed class BotAgent : IDisposable
         _stickers.Load(AppPaths.RuntimeRoot);
         _mood.Load(AppPaths.RuntimeRoot);
         ApplyMoodTtl();
+        BuildMusicService();
 
         RebuildTimersIfNeeded(); // 静默兜底 + 画像巡检 + 表情包巡检（运行时改配置走同一段逻辑）
 
@@ -920,15 +940,62 @@ public sealed class BotAgent : IDisposable
             _ = Task.Run(() => CollectStickersAsync(urls, uid, group));
         }
 
+        // 听音乐：识别到分享就后台去查歌词 + 下一份低码率音频分析波形。
+        // 有歌的时候**先不回复** —— 等分析结果回来再让模型开口，否则它只能对着一个歌名瞎聊。
+        var musicShares = _settings.EnableMusic ? msg.MusicShares : null;
+        if (musicShares is { Count: > 0 })
+        {
+            _ = Task.Run(() => HandleMusicAsync(conversation, msg.SenderName, musicShares.ToList()));
+        }
+
         // 首个群消息时补历史上下文（同桌面版"点开会话拉历史"）
         if (msg.IsGroup)
         {
             EnsureGroupContext(conversation, msg.GroupId);
         }
 
-        if (_settings.AiModeEnabled && AllowReply(conversation))
+        if (_settings.AiModeEnabled && AllowReply(conversation) && musicShares is not { Count: > 0 })
         {
             EnqueueReply(conversation, msg.MessageId > 0 ? msg.MessageId : null);
+        }
+    }
+
+    /// <summary>
+    /// 听音乐：拿歌词 + 低码率音频做波形分析，把实测到的事实留给下一轮回复。
+    /// 分析完成后单独触发一次发言机会 —— 这样模型是“听完再说”，而不是先瞎猜一遍再补课。
+    /// </summary>
+    private async Task HandleMusicAsync(BotConversation conversation, string sender, List<MusicShare> shares)
+    {
+        if (_music is null)
+        {
+            return;
+        }
+
+        var heard = false;
+        foreach (var share in shares)
+        {
+            try
+            {
+                var note = await _music.DescribeAsync(share, sender, CancellationToken.None);
+                if (string.IsNullOrWhiteSpace(note))
+                {
+                    continue;
+                }
+
+                // 一次发好几首时合并，别让后一首盖掉前一首
+                _musicNotes.AddOrUpdate(conversation.SourceKey, note!, (_, old) => old + "\n\n" + note);
+                heard = true;
+                EmitLog($"[Music] 已听过：{share.Describe()}");
+            }
+            catch (Exception ex)
+            {
+                EmitLog($"[Music] 处理失败（{share.Describe()}）: {ex.Message}");
+            }
+        }
+
+        if (heard && _settings.AiModeEnabled && AllowReply(conversation))
+        {
+            EnqueueReply(conversation, null); // 没有触发消息 → 不引用（沿用 replyTo 那套规则）
         }
     }
 
@@ -1031,6 +1098,15 @@ public sealed class BotAgent : IDisposable
 
     /// <summary>机器人当前心情：被戳次数（客观）+ 模型自己写的一句心情（主观）。</summary>
     private readonly MoodStore _mood = new();
+
+    /// <summary>听音乐专用的 HttpClient（下载音频可能几 MB，超时给宽松点）。</summary>
+    private readonly HttpClient _musicHttp = new() { Timeout = TimeSpan.FromSeconds(45) };
+
+    /// <summary>听音乐：识别到的分享 → 网易云歌词 + 低码率音频 → 波形分析。Start() 里组装。</summary>
+    private MusicService? _music;
+
+    /// <summary>每个会话最近一次“听过的歌”的事实描述，交给下一轮回复用（用掉就清）。</summary>
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, string> _musicNotes = new();
 
     /// <summary>最近一次机器人主动戳人（频率门：一次只戳一个，不参与互戳拉锯）。</summary>
     private readonly System.Collections.Concurrent.ConcurrentDictionary<string, (long TargetId, DateTimeOffset At)> _lastPokeSent = new();
@@ -1721,6 +1797,9 @@ public sealed class BotAgent : IDisposable
         var moodNow = DateTimeOffset.Now;
         var moodText = pokeContext || _mood.CurrentText(moodNow) is not null ? _mood.Describe(moodNow) : null;
 
+        // 刚“听过”的歌：把歌词与波形实测交给模型，用完就清（避免以后每轮都背上它）
+        var musicText = _musicNotes.TryRemove(conversation.SourceKey, out var pendingMusic) ? pendingMusic : null;
+
         CompletionResult result;
         try
         {
@@ -1729,7 +1808,8 @@ public sealed class BotAgent : IDisposable
                 profiles.Count > 0 ? string.Join("\n\n", profiles) : null,
                 stickers: stickerChoices.Count > 0 ? stickerChoices : null,
                 pokeContext: pokeContext,
-                moodText: moodText);
+                moodText: moodText,
+                musicText: musicText);
         }
         catch (Exception ex)
         {
