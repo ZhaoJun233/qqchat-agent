@@ -110,6 +110,14 @@ services:
       QQCHAT_VOICE_SPEED: ${VOICE_SPEED:-100}
       QQCHAT_VOICE_MAX_CHARS: ${VOICE_MAX_CHARS:-80}
       QQCHAT_TTS_URL: ${TTS_URL:-http://tts:5000}
+      # ---- 联网搜索 ----
+      # 同样是行为配置：只在首次部署当种子；之后请用面板「联网搜索」卡片调。
+      QQCHAT_WEB_SEARCH: ${WEB_SEARCH:-1}
+      QQCHAT_SEARCH_USE_MODEL: ${SEARCH_USE_MODEL:-1}
+      QQCHAT_SEARCH_SOURCES: ${SEARCH_SOURCES:-wiki|https://zh.wikipedia.org/w/api.php?action=query&list=search&srsearch={q}&format=json&srlimit=5&utf8=1}
+      QQCHAT_SEARCH_MAX_RESULTS: ${SEARCH_MAX_RESULTS:-5}
+      QQCHAT_SEARCH_TIMEOUT: ${SEARCH_TIMEOUT:-20}
+      QQCHAT_SEARCH_READ_CHARS: ${SEARCH_READ_CHARS:-1800}
       QQCHAT_VERBOSE: ${VERBOSE:-1}
       TZ: ${TZ:-Asia/Shanghai}
     volumes:
@@ -133,6 +141,9 @@ services:
   # 镜像怎么来（一次性）：python:3.11-slim + pip install piper-tts → 见 tools/tts.Dockerfile
   #    docker build -t piper-tts:latest -f tools/tts.Dockerfile tools/
   # 音色模型（*.onnx）放 ./tts/（首次用 tools/tts-server.py 里的说明下载，约 63MB）。
+  # pinyin 类音色（zh_CN-xiao_ya-medium）还要 ./tts/g2pW/（多音字消歧数据，约 150MB）：
+  #   见 tools/tts.Dockerfile 顶部的下载命令 —— 目录名必须是 g2pW，
+  #   而且容器工作目录得是 /data（就是下面这行 working_dir，别删）。
   # 机器人**不**搬运音频：它只把 http://tts:5000/speak?text=… 这个 URL 交给 NapCat，
   # 由协议端自己下载并转 silk —— 所以 tts 必须和 napcat 在同一个网络里。
   tts:
@@ -144,11 +155,16 @@ services:
     # 以 piper CLI 启动并报 “the following arguments are required: -m/--model” 而重启循环。
     entrypoint: ["python"]
     command: ["/app/tts-server.py"]
+    # 工作目录必须是 /data：piper 找中文多音字表用的是“当前目录/g2pW”
+    # （PiperVoice.download_dir 默认 Path.cwd()），不设的话它会去 /g2pW 找个空。
+    working_dir: /data
     environment:
       - VOICE_DIR=/data
       - DEFAULT_VOICE=${TTS_VOICE:-zh_CN-huayan-medium}
       - PORT=5000
       - TZ=${TZ:-Asia/Shanghai}
+      # pinyin 类音色要的 BERT 分词器缓存（约 1MB，落在 /data/hf，重建容器不用重下）
+      - HF_HOME=/data/hf
     volumes:
       - ./tts:/data                                  # 音色模型 + 旁路脚本
       - ./tts/tts-server.py:/app/tts-server.py:ro     # 旁路服务脚本（由 deploy-qqchat.py 同步）

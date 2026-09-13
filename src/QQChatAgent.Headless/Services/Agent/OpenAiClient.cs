@@ -46,7 +46,7 @@ public sealed class OpenAiClient
     /// 网络/接口异常向上抛，由调用方记日志。
     /// </summary>
     public async Task<CompletionResult> CompleteAsync(IReadOnlyList<ChatMessage> context, string? profilesText = null, CancellationToken ct = default,
-        IReadOnlyList<StickerChoice>? stickers = null, bool pokeContext = false, string? moodText = null, string? musicText = null, string? linkText = null, bool enableListen = false, bool enableVoice = false)
+        IReadOnlyList<StickerChoice>? stickers = null, bool pokeContext = false, string? moodText = null, string? musicText = null, string? linkText = null, bool enableListen = false, bool enableVoice = false, string? recallText = null, bool enableWebSearch = false, string? searchText = null)
     {
         if (string.IsNullOrWhiteSpace(_settings.ApiKey))
         {
@@ -69,8 +69,9 @@ public sealed class OpenAiClient
         // 可供模型指认的“最近几条别人的消息”：给它们附上 (#QQ消息id)，模型在 JSON 里用 replyTo 指明它在回哪一条。
         // 为什么要这么做：光靠启发式（“最新那条”或“排队时的触发”）猜不准 ——
         // 线上就出现过“正文在接一个哏，引用却挂在另一个人那句上”。模型自己知道回哪句，让它说出来。只标最近 16 条。
+        // 撤回的消息不在此列：引用一条群里已经看不到的消息，群友看到的就是莫名其妙。
         var quotableIds = new HashSet<long>(
-            window.Where(m => m.Role == MessageRole.Peer && m.QqMessageId is > 0)
+            window.Where(m => m.Role == MessageRole.Peer && !m.Recalled && m.QqMessageId is > 0)
                   .TakeLast(16)
                   .Select(m => m.QqMessageId!.Value));
 
@@ -102,6 +103,7 @@ public sealed class OpenAiClient
         systemContent +=
             "\n\n[上下文里的标记]\n" +
             "`[表情:微笑]`/`[动画表情:…]` 是对方发的 QQ 原生小表情（名字即它的含义），`[图片]`/`[语音]` 同理，" +
+            "`[已撤回] xxx` 表示这句 xxx 发出后**被撤回了**：内容你看得到（你当时在场），但群里其他人已经看不到它了，" +
             "`（戳一戳）某某 戳了你一下` 表示某某在 QQ 里戳了你——那是动作不是文字。";
 
         // 当前心情：给模型一个“我现在什么状态”的锚，让它的话风/要不要理人有个连贯的落点
@@ -128,6 +130,40 @@ public sealed class OpenAiClient
             systemContent +=
                 "\n\n[群里刚发的链接]\n" + linkText.Trim() +
                 "\n（链接内容已取回，按上面的标题/摘要聊就行；别编造页面里没有的细节，也别把整段摘要复述一遍。）";
+        }
+
+        // 联网搜索：模型可以要求“去查一下”（search 字段）或“读一下这个页面”（read 字段）。
+        // 两轮动作：机器人先把结果拿回来，下一轮它再拿着事实说话（和听音乐同一套思路）。
+        if (enableWebSearch)
+        {
+            systemContent +=
+                "\n\n[联网搜索]\n" +
+                "当你要用的信息**在你自己脑子里不可靠**、而且这件事一查就能确认时（新闻、某游戏/番剧的最新情报与攻略、" +
+                "价格、开服/发售时间、某人是声优/作者/成员这类事实），在 JSON 里加 search 字段写上要查什么：" +
+                "{\"suitability\": 85, \"reply\": \"我去查一下\", \"search\": \"碧蓝档案 砂狼白子 声优\"}。\n" +
+                "机器人会真的去搜，把结果（带来源）交给你，下一轮你就能拿着事实回答 —— 而不是靠印象编。\n" +
+                "也可以让它读某个具体网页：在 JSON 里加 read 字段填 URL（图符群友发过的链接）。\n" +
+                "规矩：① 不确定才搜，能自己想起来的别搜；② 同一件事不要连着搜两次；③ 不要每句话都搜（搜一次要花几秒）；" +
+                "④ 搜不到/读不到就如实说“没查到”，**绝对不要**用记忆里的旧信息假装是刚查到的；" +
+                "⑤ search/read 是后台动作：填了它你这一轮该接的话照接（reply 正常写）。";
+        }
+
+        // 刚有人撤回了消息：告诉模型“谁撤的 + 上下文里那条已标成 [已撤回]”
+        if (!string.IsNullOrWhiteSpace(recallText))
+        {
+            systemContent +=
+                "\n\n[有人撤回了消息]\n" + recallText.Trim() +
+                "\n（注意：撤回意味着对方不想让这句话留在群里了 —— 你可以在心里记得，" +
+                "但不要引用它、不要复述原文、也不要拿它当众开玩笑；想知道他为什么撤，问一句就行。）";
+        }
+
+        // 刚搜到的结果（或读到的网页正文）：交给模型，用完就清
+        if (!string.IsNullOrWhiteSpace(searchText))
+        {
+            systemContent +=
+                "\n\n[刚查到的资料]\n" + searchText.Trim() +
+                "\n（这是刚才真的去网上查到的：就按它说，不确定的地方就说不确定；" +
+                "不要编造上面没有的细节，也不要把整段资料念一遍。）";
         }
 
         // 想听一首歌：模型可以主动要求“让我听听这首歌”（群里让它听歌就是走这条路）
@@ -208,11 +244,14 @@ public sealed class OpenAiClient
             }
 
             // 对方消息按 {发送者}{内容--时间} 组织，帮助模型分辨谁在何时说了什么；
-            // 最近几条再附上 (#id)，供 replyTo 引用
+            // 最近几条再附上 (#id)，供 replyTo 引用。
+            // 已撤回的：正文前面加 [已撤回] 标记（**内容保留** —— 它确实看过，只是要让模型
+            // 知道“这条已经收回去了”，引用/复述时得自己拿掉分寸）。
+            var shownText = msg.Recalled ? RecallMark + msg.Text : msg.Text;
             var content = msg.Role == MessageRole.Peer && !string.IsNullOrWhiteSpace(msg.SenderName)
-                ? $"{{{msg.SenderName}}}{{{msg.Text}--{FormatTime(msg.Timestamp)}}}" +
+                ? $"{{{msg.SenderName}}}{{{shownText}--{FormatTime(msg.Timestamp)}}}" +
                   (msg.QqMessageId is long qid && quotableIds.Contains(qid) ? $" (#{qid})" : string.Empty)
-                : msg.Text;
+                : shownText;
             var role = msg.Role == MessageRole.Self ? "assistant" : "user";
 
             // 多模态：消息带图片时，把图片（下载转 base64）一并发给模型识图
@@ -483,8 +522,7 @@ public sealed class OpenAiClient
                 }
             }
 
-            // 模型想“用语音说这句”（speak）：值可以是字符串（要说的话），也可以是 true（= 用语音说 reply）。
-            // 真正能不能发由上层决定（开关/字数上限/频率门/服务可达），这里只负责取值与基本清洗。
+            // 模型想“用语音说这句”（speak）：值可以是字符串（要说的话），也可以是 true（= 用语音说 reply）。            // 真正能不能发由上层决定（开关/字数上限/频率门/服务可达），这里只负责取值与基本清洗。
             string? speak = null;
             if (root.TryGetProperty("speak", out var sp) || root.TryGetProperty("用语音说", out sp))
             {
@@ -503,6 +541,32 @@ public sealed class OpenAiClient
                 }
             }
 
+            // 模型想“上网查一下”（search）/“读一下某个页面”（read）。
+            // 真正去查是上层的事（要发 HTTP、有冷却），这里只取词：
+            //   • search 太短（<2）/太长（>120）都不要 —— 太长基本是它在写句子，不是搜索词；
+            //   • read 必须是 http(s) 地址（SSRF 闸门在上层）。
+            string? search = null;
+            if ((root.TryGetProperty("search", out var se) || root.TryGetProperty("查一下", out se)) && se.ValueKind == JsonValueKind.String)
+            {
+                var wanted = se.GetString()?.Trim();
+                if (!string.IsNullOrWhiteSpace(wanted) && wanted.Length is >= 2 and <= 120)
+                {
+                    search = wanted;
+                }
+            }
+
+            string? read = null;
+            if ((root.TryGetProperty("read", out var rd) || root.TryGetProperty("读一下", out rd)) && rd.ValueKind == JsonValueKind.String)
+            {
+                var url = rd.GetString()?.Trim();
+                if (!string.IsNullOrWhiteSpace(url) && url.Length <= 500 &&
+                    (url.StartsWith("http://", StringComparison.OrdinalIgnoreCase) ||
+                     url.StartsWith("https://", StringComparison.OrdinalIgnoreCase)))
+                {
+                    read = url;
+                }
+            }
+
             // 模型顺手写的心情（≤ 24 字）：存起来给下一轮用；太长/非字符串一律忽略
             string? mood = null;
             if (root.TryGetProperty("mood", out var md) && md.ValueKind == JsonValueKind.String)
@@ -510,7 +574,7 @@ public sealed class OpenAiClient
                 mood = md.GetString()?.Trim();
             }
 
-            return new CompletionResult(suitability, string.IsNullOrWhiteSpace(reply) ? null : reply, rawReply, stickerId, replyToId, pokeTargetId, mood, listen, shareSong, speak);
+            return new CompletionResult(suitability, string.IsNullOrWhiteSpace(reply) ? null : reply, rawReply, stickerId, replyToId, pokeTargetId, mood, listen, shareSong, speak, search, read);
         }
         catch (JsonException)
         {
@@ -598,6 +662,7 @@ public sealed class OpenAiClient
         || text.Contains("\"replyTo\"", StringComparison.OrdinalIgnoreCase)
         || text.Contains("\"mood\"", StringComparison.OrdinalIgnoreCase)
         || text.Contains("\"speak\"", StringComparison.OrdinalIgnoreCase)
+        || text.Contains("\"search\"", StringComparison.OrdinalIgnoreCase)
         || text.Contains("\"poke\"", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
@@ -1177,6 +1242,9 @@ public sealed class OpenAiClient
 
     private static string Truncate(string s, int max) => s.Length <= max ? s : s[..max] + "…";
 
+    /// <summary>撤回标记：内容是保留的，但必须让模型一眼看出“这条已经收回去了”。</summary>
+    private const string RecallMark = "[已撤回] ";
+
     /// <summary>兜底聚合：从最近 40 条消息统计每个发送者的发言（当未传入外部档案时）。</summary>
     private static string[] BuildParticipantProfiles(IReadOnlyList<ChatMessage> context)
     {
@@ -1188,9 +1256,11 @@ public sealed class OpenAiClient
                 continue;
             }
 
+            // 撤回了的也一起统计，但标明“已撤回”（这里的文本会进提示词）
+            var text = m.Recalled ? RecallMark + m.Text : m.Text;
             stats[m.SenderName] = stats.TryGetValue(m.SenderName, out var s)
-                ? (s.Count + 1, m.Text)
-                : (1, m.Text);
+                ? (s.Count + 1, text)
+                : (1, text);
         }
 
         return stats.Select(kv => $"{kv.Key}：发言 {kv.Value.Count} 次，最近说“{Truncate(kv.Value.Last, 50)}”").ToArray();
@@ -1210,7 +1280,9 @@ public readonly record struct StickerChoice(string Id, string Description);
 /// <param name="Listen">模型想“听一听”的歌名/歌手（机器人会去搜索并分析波形）；null = 不想听。</param>
 /// <param name="ShareSong">模型想分享给群里的歌（机器人搜到后发一张网易云卡片）；null = 不分享。</param>
 /// <param name="Speak">模型想“用语音说”的句子（机器人合成语音发出去）；null = 不发语音。</param>
-public readonly record struct CompletionResult(int? Suitability, string? Reply, string? RawText, string? StickerId = null, long? ReplyToMessageId = null, long? PokeTargetId = null, string? Mood = null, string? Listen = null, string? ShareSong = null, string? Speak = null);
+/// <param name="Search">模型想上网查的问题（机器人真去搜，下一轮把结果给它）；null = 不搜。</param>
+/// <param name="Read">模型想读的网页地址（机器人抓正文，下一轮把正文给它）；null = 不读。</param>
+public readonly record struct CompletionResult(int? Suitability, string? Reply, string? RawText, string? StickerId = null, long? ReplyToMessageId = null, long? PokeTargetId = null, string? Mood = null, string? Listen = null, string? ShareSong = null, string? Speak = null, string? Search = null, string? Read = null);
 
 /// <summary>图片下载器：把图片 URL 下载并转成 base64 data URL（供多模态模型识图），
 /// 也给表情包库提供原始字节。</summary>

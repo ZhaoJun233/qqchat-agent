@@ -410,6 +410,13 @@ public sealed class WebUiServer : IDisposable
             return;
         }
 
+        // /api/search/test：一键验证“联网搜索”（模型自带搜索 or 搜索源），把结果原样贴出来
+        if (path.Equals("/api/search/test", StringComparison.OrdinalIgnoreCase))
+        {
+            await HandleSearchTestAsync(context, method);
+            return;
+        }
+
         // /api/stickers 及子路径（表情包库：列表 / 取图 / 删除 / 立即巡检 / 导入）
         if (path.Equals("/api/stickers", StringComparison.OrdinalIgnoreCase) ||
             path.StartsWith("/api/stickers/", StringComparison.OrdinalIgnoreCase))
@@ -551,6 +558,11 @@ public sealed class WebUiServer : IDisposable
         if (body["voiceSpeed"] is JsonNode vs) s.VoiceSpeed = Math.Clamp(vs.GetValue<int>(), 50, 200);
         if (body["voiceMaxChars"] is JsonNode vmc) s.VoiceMaxChars = Math.Clamp(vmc.GetValue<int>(), 10, 300);
         if (body["ttsServiceUrl"] is JsonNode tts) s.TtsServiceUrl = tts.GetValue<string>().Trim();
+        if (body["enableWebSearch"] is JsonNode ws) s.EnableWebSearch = ws.GetValue<bool>();
+        if (body["webSearchUseModelSearch"] is JsonNode wsm) s.WebSearchUseModelSearch = wsm.GetValue<bool>();
+        if (body["webSearchSources"] is JsonNode wss) s.WebSearchSources = wss.GetValue<string>().Trim();
+        if (body["webSearchMaxResults"] is JsonNode wsr) s.WebSearchMaxResults = Math.Clamp(wsr.GetValue<int>(), 1, 10);
+        if (body["webSearchTimeoutSeconds"] is JsonNode wst) s.WebSearchTimeoutSeconds = Math.Clamp(wst.GetValue<int>(), 5, 60);
         if (body["enableLinkPreview"] is JsonNode elp) s.EnableLinkPreview = elp.GetValue<bool>();
         if (body["linkPreviewTimeoutSeconds"] is JsonNode lpt) s.LinkPreviewTimeoutSeconds = Math.Clamp(lpt.GetValue<int>(), 2, 30);
         if (body["linkPreviewMax"] is JsonNode lpm) s.LinkPreviewMax = Math.Clamp(lpm.GetValue<int>(), 0, 5);
@@ -876,7 +888,9 @@ public sealed class WebUiServer : IDisposable
         ["images"] = m.ImageUrls is { Count: > 0 }
             ? new JsonArray(m.ImageUrls.Select(u => (JsonNode)u!).ToArray())
             : null,
-        ["qqMessageId"] = m.QqMessageId
+        ["qqMessageId"] = m.QqMessageId,
+        // 已撤回的消息：面板把它划掉并注明“模型看到的是 [已撤回]”
+        ["recalled"] = m.Recalled ? true : null
     };
 
     /// <summary>QQ 头像：群 p.qlogo.cn/gh/{群号}/{群号}/0；用户 q1.qlogo.cn/g?b=qq&amp;nk={QQ}&amp;s=640。</summary>
@@ -924,6 +938,11 @@ public sealed class WebUiServer : IDisposable
         ["voiceSpeed"] = s.VoiceSpeed,
         ["voiceMaxChars"] = s.VoiceMaxChars,
         ["ttsServiceUrl"] = s.TtsServiceUrl,
+         ["enableWebSearch"] = s.EnableWebSearch,
+         ["webSearchUseModelSearch"] = s.WebSearchUseModelSearch,
+         ["webSearchSources"] = s.WebSearchSources,
+         ["webSearchMaxResults"] = s.WebSearchMaxResults,
+         ["webSearchTimeoutSeconds"] = s.WebSearchTimeoutSeconds,
         ["enableLinkPreview"] = s.EnableLinkPreview,
         ["linkPreviewTimeoutSeconds"] = s.LinkPreviewTimeoutSeconds,
         ["linkPreviewMax"] = s.LinkPreviewMax,
@@ -1432,6 +1451,78 @@ public sealed class WebUiServer : IDisposable
             ["default"] = payload?["default"]?.ToString(),
             ["error"] = error
         });
+    }
+
+    /// <summary>
+    /// /api/search/test：跑一次真实联网搜索（模型自带搜索优先，否则走搜索源模板）。
+    /// 为什么要这个入口：搜索能不能用跟“服务器 IP、代理支不支持工具”强相关，
+    /// 面板上当场跑一次，比在群里碰运气强。
+    /// </summary>
+    private async Task HandleSearchTestAsync(HttpListenerContext context, string method)
+    {
+        if (method != "POST")
+        {
+            await WriteJsonAsync(context, 405, new JsonObject { ["error"] = "method not allowed" });
+            return;
+        }
+
+        JsonNode? body;
+        try
+        {
+            body = await ReadJsonAsync(context);
+        }
+        catch (Exception)
+        {
+            await WriteJsonAsync(context, 400, new JsonObject { ["error"] = "请求体不是合法 JSON" });
+            return;
+        }
+
+        var query = body?["query"]?.GetValue<string>()?.Trim();
+        var url = body?["url"]?.GetValue<string>()?.Trim();
+        if (string.IsNullOrWhiteSpace(query) && string.IsNullOrWhiteSpace(url))
+        {
+            await WriteJsonAsync(context, 400, new JsonObject { ["error"] = "请填 query（搜索词）或 url（要读的页面）" });
+            return;
+        }
+
+        try
+        {
+            if (!string.IsNullOrWhiteSpace(url))
+            {
+                var (text, error) = await _agent.TestReadPageAsync(url!, CancellationToken.None);
+                await WriteJsonAsync(context, 200, new JsonObject
+                {
+                    ["ok"] = text is not null,
+                    ["mode"] = "read",
+                    ["text"] = text,
+                    ["error"] = error
+                });
+                return;
+            }
+
+            var result = await _agent.TestSearchAsync(query!, CancellationToken.None);
+            await WriteJsonAsync(context, 200, new JsonObject
+            {
+                ["ok"] = result.HasContent,
+                ["mode"] = "search",
+                ["provider"] = result.Provider,
+                ["answer"] = result.Answer,
+                ["hits"] = new JsonArray(result.Hits
+                    .Select(h => (JsonNode)new JsonObject
+                    {
+                        ["title"] = h.Title,
+                        ["url"] = h.Url,
+                        ["snippet"] = h.Snippet
+                    })
+                    .ToArray()),
+                ["note"] = result.Describe(),
+                ["error"] = result.Error
+            });
+        }
+        catch (Exception ex)
+        {
+            await WriteJsonAsync(context, 500, new JsonObject { ["error"] = ex.Message });
+        }
     }
 
     private static async Task<JsonNode?> ReadJsonAsync(HttpListenerContext context)

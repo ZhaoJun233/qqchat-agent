@@ -61,6 +61,20 @@ public sealed record QqPokeEvent(
     bool IsSelfPoked,
     DateTimeOffset Time);
 
+/// <summary>
+/// 撤回事件（OneBot v11：<c>post_type=notice</c> + <c>notice_type=group_recall</c> / <c>friend_recall</c>）。
+/// </summary>
+/// <param name="UserId">原消息的发送者。</param>
+/// <param name="OperatorId">动手撤回的人（群管理可以撤回别人的消息）；0 = 未知或本人撤的。</param>
+/// <param name="MessageId">被撤回的那条消息 id —— 用它去会话里把那条标成已撤回。</param>
+public sealed record QqRecallEvent(
+    bool IsGroup,
+    long GroupId,
+    long UserId,
+    long OperatorId,
+    long MessageId,
+    DateTimeOffset Time);
+
 public static class OneBotJson
 {
     public static readonly JsonSerializerOptions Options = new()

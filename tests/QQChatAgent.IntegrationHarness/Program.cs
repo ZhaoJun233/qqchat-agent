@@ -18,6 +18,8 @@ namespace QQChatAgent.IntegrationHarness;
 ///   S22 听音乐（识别分享 → 歌词 → 波形分析 → 交给模型）
 ///   S23 链接预览（群友发的链接真去打开取标题/摘要）
 ///   S24 语音消息（模型 speak → record 段只给 URL → 面板试听/健康检查）
+///   S25 撤回消息（[已撤回] 标记 / 不给模型看原文 / 可评论带冷却）
+///   S26 联网搜索（模型自带搜索 grounding / 搜索源兜底 / read 读页面 / SSRF 闸门）
 /// 每个场景用独立进程与独立数据目录，互不干扰。
 /// </summary>
 public static partial class Program
@@ -92,6 +94,8 @@ public static partial class Program
         await Scenario("s22", RunMusicScenarioAsync);
         await Scenario("s23", RunLinksScenarioAsync);
         await Scenario("s24", RunVoiceScenarioAsync);
+        await Scenario("s25", RunRecallScenarioAsync);
+        await Scenario("s26", RunSearchScenarioAsync);
         }
         catch (Exception ex)
         {

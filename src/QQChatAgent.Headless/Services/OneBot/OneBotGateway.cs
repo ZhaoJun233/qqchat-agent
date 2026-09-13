@@ -95,6 +95,9 @@ public sealed class OneBotGateway : IQqChatSource, IDisposable
     /// <summary>收到戳一戳（post_type=notice）。别人互戳也会报上来。</summary>
     public event Action<QqPokeEvent>? Poked;
 
+    /// <summary>收到撤回（post_type=notice 下的 group_recall / friend_recall）。</summary>
+    public event Action<QqRecallEvent>? MessageRecalled;
+
     public async Task<bool> SendTextAsync(bool isGroup, long targetId, string text, CancellationToken ct = default, long? replyToMessageId = null)
     {
         var action = isGroup ? "send_group_msg" : "send_private_msg";
@@ -566,6 +569,15 @@ public sealed class OneBotGateway : IQqChatSource, IDisposable
     {
         var noticeType = root["notice_type"]?.GetValue<string>();
         var subType = root["sub_type"]?.GetValue<string>();
+
+        // 撤回：group_recall（群）/ friend_recall（私聊）。
+        // 这两种事件的 message_id 在不同协议端有 number/string 两种写法，两种都收。
+        if (noticeType is "group_recall" or "friend_recall")
+        {
+            HandleRecallEvent(root, noticeType == "group_recall");
+            return;
+        }
+
         var isPoke = noticeType == "poke" || (noticeType == "notify" && subType == "poke");
         if (!isPoke)
         {
@@ -613,6 +625,44 @@ public sealed class OneBotGateway : IQqChatSource, IDisposable
             targetId,
             selfId != 0 && targetId == selfId,
             DateTimeOffset.FromUnixTimeSeconds(time)));
+    }
+
+    /// <summary>
+    /// 撤回事件（OneBot v11）：
+    ///   group_recall : { group_id, user_id（原发送者）, operator_id（动手的人）, message_id }
+    ///   friend_recall: { user_id, message_id }（私聊，没有 group_id/operator_id）
+    /// 拿不到 message_id 就当没看见 —— 没有它就无法定位是哪一条，硬猜只会标记错消息。
+    /// </summary>
+    private void HandleRecallEvent(JsonNode root, bool isGroup)
+    {
+        var messageId = ReadLong(root, "message_id");
+        if (messageId <= 0)
+        {
+            Log("收到撤回事件但没有 message_id，已忽略（无法定位是哪一条）");
+            return;
+        }
+
+        var time = root["time"]?.GetValue<long>() ?? DateTimeOffset.Now.ToUnixTimeSeconds();
+        MessageRecalled?.Invoke(new QqRecallEvent(
+            isGroup,
+            ReadLong(root, "group_id"),
+            ReadLong(root, "user_id"),
+            ReadLong(root, "operator_id"),
+            messageId,
+            DateTimeOffset.FromUnixTimeSeconds(time)));
+    }
+
+    /// <summary>数字字段兼容 number / string 两种写法（协议端版本差异），取不到返回 0。</summary>
+    private static long ReadLong(JsonNode root, string name)
+    {
+        var node = root[name];
+        return node switch
+        {
+            null => 0,
+            JsonValue value when value.TryGetValue<long>(out var parsed) => parsed,
+            JsonValue value when long.TryParse(value.ToString(), out var parsed) => parsed,
+            _ => 0
+        };
     }
 
     private async Task HandleMessageEventAsync(JsonNode root)

@@ -23,6 +23,16 @@ public sealed class ChatMessage
     /// <summary>QQ 原始消息 ID（用于历史去重）。</summary>
     public long? QqMessageId { get; init; }
 
+    /// <summary>
+    /// 这条消息后来被撤回了（OneBot 的 group_recall / friend_recall 事件）。
+    /// 为什么要记：撤回后群友就看不到内容了，但机器人手里还有 —— 不标记的话它下一轮会
+    /// 引用一句“已经不存在的消息”，或者把撤回前看到的内容当成公共信息继续用。
+    /// 标记之后：送给模型的正文变成 <c>[已撤回]</c>（它知道“这里有过一条、被撤了”），
+    /// 同时不能再被选作回复引用目标。
+    /// 原始正文仍留在记录里（面板/日志是给运维看的），但**永远不会**再发给模型。
+    /// </summary>
+    public bool Recalled { get; set; }
+
     /// <summary>时间短格式：当天 HH:mm，跨天 MM-dd HH:mm。</summary>
     public string TimeText
     {

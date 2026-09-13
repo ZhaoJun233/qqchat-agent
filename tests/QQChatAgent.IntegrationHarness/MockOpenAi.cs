@@ -59,6 +59,112 @@ public sealed class MockOpenAi : IDisposable
         }
     }
 
+    /// <summary>收到的联网搜索（原生 generateContent）请求数。</summary>
+    public int GroundingRequests
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return _groundingRequests;
+            }
+        }
+    }
+
+    private int _groundingRequests;
+
+    /// <summary>原生端点的请求体（排障用：看它到底发了什么工具/提示词）。</summary>
+    public string LastGroundingBody { get; private set; } = string.Empty;
+
+    /// <summary>打开后原生端一律 500（用来验证“模型搜索不可用 → 回退到搜索源”）。</summary>
+    public bool GroundingFails { get; set; }
+
+    /// <summary>模型搜索返回的答案（带来源）。</summary>
+    public string GroundingAnswer { get; set; } = "《碧蓝档案》里的砂狼白子，日语配音是小仓唯。";
+
+    public string[] GroundingSourceTitles { get; set; } = ["碧蓝档案 - 维基百科", "砂狼白子 - 萌娘百科"];
+
+    /// <summary>模拟 Google 的真实 grounding 响应结构（含 webSearchQueries + groundingChunks）。</summary>
+    private async Task HandleGroundingAsync(HttpListenerContext context, string body)
+    {
+        lock (_gate)
+        {
+            _groundingRequests++;
+            // 存成**不转义中文**的形式：默认编码器会把中文写成 \uXXXX，
+            // 按中文写断言就会全部落空（这个坑在 MockOpenAi.DescribeRequest 上踩过一次）。
+            try
+            {
+                LastGroundingBody = JsonNode.Parse(body)?.ToJsonString(
+                    new JsonSerializerOptions
+                    {
+                        WriteIndented = true,
+                        Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping
+                    }) ?? body;
+            }
+            catch (Exception)
+            {
+                LastGroundingBody = body;
+            }
+        }
+
+        if (GroundingFails)
+        {
+            var err = Encoding.UTF8.GetBytes("{\"error\": {\"code\": 500, \"message\": \"grounding unavailable (test)\"}}");
+            context.Response.StatusCode = 500;
+            context.Response.ContentType = "application/json";
+            context.Response.ContentLength64 = err.Length;
+            await context.Response.OutputStream.WriteAsync(err);
+            context.Response.Close();
+            return;
+        }
+
+        var chunks = new JsonArray();
+        foreach (var title in GroundingSourceTitles)
+        {
+            chunks.Add(new JsonObject
+            {
+                ["web"] = new JsonObject
+                {
+                    ["uri"] = "https://vertexaisearch.cloud.google.com/grounding-api-redirect/TEST",
+                    ["title"] = title
+                }
+            });
+        }
+
+        var response = new JsonObject
+        {
+            ["candidates"] = new JsonArray
+            {
+                new JsonObject
+                {
+                    ["content"] = new JsonObject
+                    {
+                        ["role"] = "model",
+                        ["parts"] = new JsonArray
+                        {
+                            new JsonObject { ["thoughtSignature"] = "test", ["text"] = GroundingAnswer }
+                        }
+                    },
+                    ["finishReason"] = "STOP",
+                    ["groundingMetadata"] = new JsonObject
+                    {
+                        ["webSearchQueries"] = new JsonArray { "测试检索词" },
+                        ["groundingChunks"] = chunks,
+                        ["groundingSupports"] = new JsonArray()
+                    }
+                }
+            },
+            ["usageMetadata"] = new JsonObject { ["totalTokenCount"] = 123 }
+        };
+
+        var bytes = Encoding.UTF8.GetBytes(response.ToJsonString());
+        context.Response.StatusCode = 200;
+        context.Response.ContentType = "application/json";
+        context.Response.ContentLength64 = bytes.Length;
+        await context.Response.OutputStream.WriteAsync(bytes);
+        context.Response.Close();
+    }
+
     /// <summary>排入一条脚本文本（模型 message.content 原文），先进先出。</summary>
     public void EnqueueReply(string content)
     {
@@ -96,6 +202,14 @@ public sealed class MockOpenAi : IDisposable
     {
         using var reader = new StreamReader(context.Request.InputStream, Encoding.UTF8);
         var body = await reader.ReadToEndAsync();
+
+        // Gemini 原生端点（联网搜索就走这条）：/v1beta/models/<model>:generateContent
+        var path = context.Request.Url?.AbsolutePath ?? string.Empty;
+        if (path.Contains(":generateContent", StringComparison.OrdinalIgnoreCase))
+        {
+            await HandleGroundingAsync(context, body);
+            return;
+        }
 
         JsonObject? payload = null;
         try

@@ -450,7 +450,22 @@
   }
 
   function fillBubble(bubble, m) {
-    bubble.textContent = m.text || "";
+    if (m.recalled) {
+      // 已撤回：面板是运维视角 —— 原文看得到（方便排查），但要划掉并说清楚
+      // “模型看到的是 [已撤回]”，否则操作者会以为机器人看过这条内容。
+      const orig = document.createElement("span");
+      orig.className = "recalled-text";
+      orig.textContent = m.text || "";
+      bubble.appendChild(orig);
+
+      const tag = document.createElement("div");
+      tag.className = "recall-tag";
+      tag.textContent = "已撤回" + (m.recallOperator ? `（${m.recallOperator}）` : "") + " · 模型看到的是「[已撤回] 原文」";
+      bubble.appendChild(tag);
+    } else {
+      bubble.textContent = m.text || "";
+    }
+
     for (const u of m.images || []) {
       const img = document.createElement("img");
       img.alt = "";
@@ -861,6 +876,11 @@
     $("setMusicKeepAudio").checked = r.musicKeepAudio === true;
     $("musicHint").textContent = "网易云 Cookie：" + (r.neteaseCookieSet ? "已设置（环境变量）" : "未设置（可选）");
     $("setEnableLinkPreview").checked = r.enableLinkPreview !== false;
+    $("setEnableWebSearch").checked = r.enableWebSearch === true;
+    $("setWebSearchUseModelSearch").checked = r.webSearchUseModelSearch !== false;
+    $("setWebSearchSources").value = r.webSearchSources || "";
+    $("setWebSearchMaxResults").value = r.webSearchMaxResults;
+    $("setWebSearchTimeoutSeconds").value = r.webSearchTimeoutSeconds;
     $("setEnableVoice").checked = r.enableVoice === true;
     $("setVoiceName").value = r.voiceName || "";
     $("setVoiceSpeed").value = r.voiceSpeed;
@@ -943,6 +963,11 @@
       neteaseBaseUrl: $("audioNeteaseBase").value.trim(),
       musicKeepAudio: $("setMusicKeepAudio").checked,
       enableLinkPreview: $("setEnableLinkPreview").checked,
+      enableWebSearch: $("setEnableWebSearch").checked,
+      webSearchUseModelSearch: $("setWebSearchUseModelSearch").checked,
+      webSearchSources: $("setWebSearchSources").value.trim(),
+      webSearchMaxResults: Number($("setWebSearchMaxResults").value),
+      webSearchTimeoutSeconds: Number($("setWebSearchTimeoutSeconds").value),
       enableVoice: $("setEnableVoice").checked,
       voiceName: $("setVoiceName").value.trim(),
       voiceSpeed: Number($("setVoiceSpeed").value),
@@ -1350,6 +1375,28 @@
         }
       } catch (err) {
         out.textContent = "试听失败：" + err.message;
+      }
+    });
+
+    /* ─────────── 联网搜索 ───────────
+       一个入口两种用法：填搜索词就是搜，填 http(s) 网址就是读那页正文。
+       为什么让面板直接跑：搜索能不能用跟服务器 IP、网关支不支持 google_search 强相关，
+       当场跑一次比在群里碰运气强。 */
+    $("searchTestGo").addEventListener("click", async () => {
+      const out = $("searchTestOut");
+      const value = $("searchTestQuery").value.trim();
+      if (!value) { toast("先填个搜索词或网址"); return; }
+      const isUrl = /^https?:\/\//i.test(value);
+      out.textContent = isUrl ? "正在读页面…" : "正在搜索…（模型自带搜索要等几秒）";
+      try {
+        await saveSettings();   // 先用当前设置，不然测的是旧配置
+        const r = await api("/api/search/test", {
+          method: "POST",
+          body: JSON.stringify(isUrl ? { url: value } : { query: value })
+        });
+        out.textContent = (r && (r.note || r.text)) || ("没查到：" + ((r && r.error) || "上游无返回"));
+      } catch (err) {
+        out.textContent = "失败：" + ((err.data && err.data.error) || err.message);
       }
     });
 

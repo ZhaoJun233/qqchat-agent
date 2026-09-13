@@ -471,6 +471,10 @@ textarea { resize: vertical; line-height: 1.5; }
 .msg-time { font-size: 11px; color: var(--text-tertiary); margin: 4px 4px 0; }
 .msg.self .msg-time { text-align: right; }
 
+/* 已撤回：原文划掉（面板是运维视角，留着方便排查），并注明模型看到的是 [已撤回] */
+.recalled-text { text-decoration: line-through; opacity: 0.5; }
+.recall-tag { margin-top: 4px; font-size: 11px; color: var(--text-tertiary); }
+
 .bubble img {
   max-width: 240px; max-height: 240px;
   border-radius: 10px; display: block; margin-top: 6px;

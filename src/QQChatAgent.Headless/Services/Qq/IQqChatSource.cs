@@ -14,6 +14,13 @@ public interface IQqChatSource
     /// <summary>收到戳一戳（后台线程触发）。别人互戳也会报上来，是否回应由上层决定。</summary>
     event Action<QqPokeEvent>? Poked;
 
+    /// <summary>
+    /// 有人撤回了消息（后台线程触发）。
+    /// 撤回不是消息，无法从正文里看出来 —— 只能靠 notice 事件同步给上层，
+    /// 否则会话里会一直留着一条“群里已经看不到”的消息（模型还会拿它接话）。
+    /// </summary>
+    event Action<QqRecallEvent>? MessageRecalled;
+
     /// <summary>连接状态变化（true=在线）。</summary>
     event Action<bool>? ConnectionChanged;
 

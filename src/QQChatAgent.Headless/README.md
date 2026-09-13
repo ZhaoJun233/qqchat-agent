@@ -126,6 +126,12 @@ secrets:
 | `QQCHAT_VOICE_SPEED` | `100` | 语速百分比（100 = 原速，越大越快） |
 | `QQCHAT_VOICE_MAX_CHARS` | `80` | 单条语音字数上限（超过就不发语音，改打字） |
 | `QQCHAT_TTS_URL` | `http://tts:5000` | TTS 旁路服务地址（机器人拼 `/speak?text=…`，NapCat 去下载） |
+| `QQCHAT_WEB_SEARCH` | `1` | 联网搜索总开关（模型填 `search` / `read` 时才用） |
+| `QQCHAT_SEARCH_USE_MODEL` | `1` | 优先用“模型自带搜索”（网关背后的 Gemini + `google_search`，带来源） |
+| `QQCHAT_SEARCH_SOURCES` | Wikipedia API | 兑底搜索源模板（每行 `name|url`，`{q}` 是查询词；`searx*`/`wiki*` 有专用解析） |
+| `QQCHAT_SEARCH_MAX_RESULTS` | `5` | 每次给模型看几条结果 |
+| `QQCHAT_SEARCH_TIMEOUT` | `20` | 搜索 / 读页面超时（秒） |
+| `QQCHAT_SEARCH_READ_CHARS` | `1800` | `read` 抓到的正文截断长度（字） |
 | `TZ` | `Asia/Shanghai` | 影响消息时间戳与模型看到的"现在几点" |
 
 > 面板内扫码登录为什么需要令牌：机器人是向 NapCat WebUI 的公开接口
@@ -281,7 +287,6 @@ docker inspect --format '{{.State.Health.Status}}' qqchat-bot
 > 模型给的是“说明 + 关键词”而不是图片本身，候选必须是检索出来的几张，不能把整库塞进提示词。
 
 ## 语音消息（可选：模型偶尔用声音说一句）
-
 ```
 模型输出 JSON 里带 speak（要说出口的话；也可以是 true = 把 reply 用语音说）
    └─→ 机器人拼出 http://tts:5000/speak?text=…&voice=…&speed=…
@@ -310,6 +315,38 @@ docker inspect --format '{{.State.Health.Status}}' qqchat-bot
 > 音色就是模型文件：换音色 = 往 `/opt/qqchat/tts/` 放一个 `<name>.onnx`（+ 同名 `.json`）。
 > 要复现**某个真人的嗓音**需要先把声音用在自己身上得到授权，再单独训练或调用云端克隆 API ——
 > 没授权的真人音色不要做。
+
+## 撤回消息与联网搜索
+
+**撤回（`group_recall` / `friend_recall`）** —— 撤回是没有正文的事件，只能靠 notice 同步：
+
+```
+群友撤回一条消息
+  └─→ 会话里那条变成 [已撤回] 原内容（内容保留：机器人当时在场，直接抹掉会让它“失忆”）
+        ├─→ 不再给 (#id)，也不可能被选为 replyTo（引用一条群里看不到的消息很奇怪）
+        ├─→ 给模型一次开口机会（“撤回了啥”），同会话 90s 冷却
+        └─→ 提示词明确：可以记得，但不要引用/复述原文/当众开玩笑
+面板：那条消息会被划掉，并注明“模型看到的是「[已撤回] 原文」”
+```
+
+**联网搜索（模型填 `search` / `read`）** —— 两轮动作，和“听音乐”同一套思路：
+
+```
+模型输出 {"reply":"我去查一下","search":"关键词"}  或  {"read":"https://…"}
+  └─→ 后台真去查/去读（不阻塞本轮回复）
+        ├─→ 首选：原生 /v1beta/models/<model>:generateContent + tools:[{google_search:{}}]
+        │        —— Google 真去搜，答案带 groundingMetadata（检索词 + 来源标题）
+        └─→ 兑底：WebSearchSources 模板（searx* = SearxNG JSON / wiki* = MediaWiki JSON / 其余抽 HTML 链接）
+              └─→ 结果作为“刚查到的资料”进**下一轮**提示词，模型拿着事实再说
+冷共：同一会话 30 秒只查一次；搜不到/读不到就如实告诉模型“没查到”（别让它编）
+SSRF：所有出站 URL（含 read 的）都过 SafeUrl；搜索源地址也在其中
+```
+
+为什么默认是“模型自带搜索”而不是爬网页：很多部署环境的出口 IP 是机房地址，
+Google/Bing/DuckDuckGo/百度 对爬虫一律回看板页或验证码；而模型订阅本身就能搜 ——
+不额外要密钥、不爬虫、结果还带来源。搜索源模板留给“自建 SearxNG / 内网检索 / 干净出口 IP”的场景。
+
+相关接口：`POST /api/search/test`（`{query}` 搜 / `{url}` 读页面）、`POST /api/voice/test`、`GET /api/voice/health`。
 
 ## 与桌面版的差异
 

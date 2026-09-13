@@ -254,6 +254,44 @@ public sealed class MockProtocol : IDisposable
         }
     }
 
+    /// <summary>
+    /// 发一个群撤回事件（notice_type=group_recall）。
+    /// operator_id 不填就当作“本人撤的”；群管理撤别人的消息时两者不同。
+    /// </summary>
+    public async Task SendGroupRecallAsync(long groupId, long userId, long messageId,
+        long operatorId = 0, CancellationToken ct = default)
+    {
+        var evt = new JsonObject
+        {
+            ["post_type"] = "notice",
+            ["notice_type"] = "group_recall",
+            ["self_id"] = SelfId,
+            ["user_id"] = userId,
+            ["group_id"] = groupId,
+            ["operator_id"] = operatorId == 0 ? userId : operatorId,
+            ["message_id"] = messageId,
+            ["time"] = DateTimeOffset.Now.ToUnixTimeSeconds()
+        };
+
+        await SendRawAsync(evt.ToJsonString(), ct);
+    }
+
+    /// <summary>发一个私聊撤回事件（notice_type=friend_recall）。</summary>
+    public async Task SendFriendRecallAsync(long userId, long messageId, CancellationToken ct = default)
+    {
+        var evt = new JsonObject
+        {
+            ["post_type"] = "notice",
+            ["notice_type"] = "friend_recall",
+            ["self_id"] = SelfId,
+            ["user_id"] = userId,
+            ["message_id"] = messageId,
+            ["time"] = DateTimeOffset.Now.ToUnixTimeSeconds()
+        };
+
+        await SendRawAsync(evt.ToJsonString(), ct);
+    }
+
     /// <summary>发一个戳一戳事件（notice）；targetId 等于机器人自己 = 戳了机器人。</summary>
     public async Task SendPokeAsync(long groupId, long userId, long targetId, CancellationToken ct = default)
     {

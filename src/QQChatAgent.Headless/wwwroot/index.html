@@ -472,6 +472,54 @@
             试听用的是<b>已保存</b>的「TTS 服务地址」——改了地址先点保存再试听。</p>
         </div>
 
+        <!-- 联网搜索 -->
+        <div class="card">
+          <div class="card-head">
+            <h3>联网搜索</h3>
+            <p>模型可以要求<b>去网上查一下</b>（JSON 里填 <code>search</code> 字段）或<b>读一下某个网页</b>（<code>read</code> 字段），
+              查到的东西会作为<b>事实</b>交给它，下一轮再拿着事实回答 —— 而不是靠印象编。
+              默认走<b>模型自带搜索</b>（网关背后的 Gemini + Google Search，结果自带来源）；它不可用时才回退到下面的搜索源。</p>
+          </div>
+
+          <label class="switch-row">
+            <input type="checkbox" id="setEnableWebSearch" />
+            <span class="switch"></span>
+            <span>启用联网搜索（模型可以要求查资料）<span class="hint">同一会话 30 秒内只查一次</span></span>
+          </label>
+
+          <label class="switch-row">
+            <input type="checkbox" id="setWebSearchUseModelSearch" />
+            <span class="switch"></span>
+            <span>优先用模型自带搜索<span class="hint">关掉就只用下面的搜索源模板（不花模型 token）</span></span>
+          </label>
+
+          <div class="grid-2">
+            <div class="field">
+              <label>每次给模型看几条结果</label>
+              <input type="number" id="setWebSearchMaxResults" min="1" max="10" step="1" />
+            </div>
+            <div class="field">
+              <label>搜索 / 读页面超时（秒）</label>
+              <input type="number" id="setWebSearchTimeoutSeconds" min="5" max="60" step="5" />
+            </div>
+          </div>
+
+          <div class="field">
+            <label>搜索源（兜底，每行一条：<code>name|url</code>，<code>{q}</code> 是查询词）
+              <span class="hint">searx* = SearxNG JSON；wiki* = MediaWiki JSON；其余当通用 HTML 抽链接</span></label>
+            <textarea id="setWebSearchSources" rows="3" spellcheck="false" placeholder="wiki|https://zh.wikipedia.org/w/api.php?action=query&amp;list=search&amp;srsearch={q}&amp;format=json"></textarea>
+          </div>
+
+          <div class="sticker-actions">
+            <input type="text" id="searchTestQuery" maxlength="120" placeholder="搜一下：碧蓝档案 砂狼白子 声优（填 URL 则是读页面）" style="flex:1" />
+            <button class="ghost-btn" id="searchTestGo">搜一下 / 读页面</button>
+          </div>
+          <pre id="searchTestOut" class="path-hint" style="white-space:pre-wrap;max-height:220px;overflow:auto"></pre>
+
+          <p class="path-hint">为什么默认靠模型自带搜索：这台服务器是机房 IP —— Google/Bing/DuckDuckGo/百度 对爬虫一律回看板页或验证码（实测记录见交接文档）；
+            而模型订阅本来就能搜，不额外要密钥、不爬虫、结果还带来源。自建 SearxNG 可以把地址填到上面。</p>
+        </div>
+
         <!-- 链接与分享 -->
         <div class="card">
           <div class="card-head">

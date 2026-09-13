@@ -182,6 +182,37 @@ public sealed class AppSettings
     /// <summary>一条消息里最多预览几个链接。</summary>
     public int LinkPreviewMax { get; set; } = 3;
 
+    // ---------- 联网搜索（模型可以要求“去查一下”） ----------
+
+    /// <summary>启用联网搜索：模型在 JSON 里填 search 字段时，机器人真去搜，拿到事实后再回。默认开。</summary>
+    public bool EnableWebSearch { get; set; } = true;
+
+    /// <summary>
+    /// 优先用“模型自带搜索”（OpenAI 兼容网关背后的 Gemini 原生端点 + google_search 工具）。
+    /// 为什么默认走它：机房 IP 上爬网页搜索基本拿不到结果（Google/Bing/DDG/百度 都拦），
+    /// 而模型订阅本来就能搜 —— 不额外要密钥、不爬虫、结果还带来源。
+    /// 关掉就只用下面的搜索源模板。
+    /// </summary>
+    public bool WebSearchUseModelSearch { get; set; } = true;
+
+    /// <summary>
+    /// 搜索源模板（每行一条，name|url；{q} = 查询词，会做 URL 编码）。兜底用：
+    /// 模型搜索不可用（不是 Gemini、代理不转发工具）时才走这里。
+    /// name 决定解析方式：searx* = SearxNG JSON；wiki* = MediaWiki JSON；其余当通用 HTML 抽链接。
+    /// 默认给 Wikipedia（实测这台服务器上唯一能直接用的）。
+    /// </summary>
+    public string WebSearchSources { get; set; } =
+        "wiki|https://zh.wikipedia.org/w/api.php?action=query&list=search&srsearch={q}&format=json&srlimit=5&utf8=1";
+
+    /// <summary>每次给模型看几条搜索结果。</summary>
+    public int WebSearchMaxResults { get; set; } = 5;
+
+    /// <summary>搜索/读页面的超时（秒）。</summary>
+    public int WebSearchTimeoutSeconds { get; set; } = 20;
+
+    /// <summary>read 页面正文截断长度（字）。</summary>
+    public int WebSearchReadMaxChars { get; set; } = 1800;
+
     // ---------- 听音乐（识别群里的音乐分享 + 网易云歌词 + 波形分析） ----------
 
     /// <summary>启用“听音乐”：有人分享歌时，自动查歌词、下一份低码率音频分析波形，再交模型接话。</summary>

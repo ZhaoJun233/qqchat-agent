@@ -8,6 +8,7 @@ using QQChatAgent.Services.Stickers;
 using QQChatAgent.Services.Music;
 using QQChatAgent.Services.Links;
 using QQChatAgent.Services.Voice;
+using QQChatAgent.Services.Net;
 
 namespace QQChatAgent.Services;
 
@@ -774,6 +775,7 @@ public sealed class BotAgent : IDisposable
         _source.MessageReceived += OnMessageReceived;
         _source.ConnectionChanged += OnConnectionChanged;
         _source.Poked += OnPoked;
+        _source.MessageRecalled += OnMessageRecalled;
 
         RestoreConversations();
         _stickers.Load(AppPaths.RuntimeRoot);
@@ -781,6 +783,7 @@ public sealed class BotAgent : IDisposable
         ApplyMoodTtl();
         BuildMusicService();
         _voice = new VoiceService(_voiceHttp, () => _settings, EmitLog);
+        _search = new WebSearchService(_netHttp, () => _settings, EmitLog);
 
         RebuildTimersIfNeeded(); // 静默兜底 + 画像巡检 + 表情包巡检（运行时改配置走同一段逻辑）
 
@@ -812,6 +815,7 @@ public sealed class BotAgent : IDisposable
         _source.MessageReceived -= OnMessageReceived;
         _source.ConnectionChanged -= OnConnectionChanged;
         _source.Poked -= OnPoked;
+        _source.MessageRecalled -= OnMessageRecalled;
         _idleTimer?.Dispose();
         _summaryTimer?.Dispose();
         _stickerTimer?.Dispose();
@@ -995,6 +999,87 @@ public sealed class BotAgent : IDisposable
             EnqueueReply(conversation, msg.MessageId > 0 ? msg.MessageId : null);
         }
     }
+
+    /// <summary>
+    /// 后台真去搜一次，把结果留给下一轮（并在允许时叫醒模型）。
+    /// 为什么要冷却：搜索是一次真实的模型调用 + 几秒等待；群里连问几个问题就排队了。
+    /// </summary>
+    private void QueueWebSearchAsync(BotConversation conversation, string query)
+    {
+        var key = conversation.SourceKey;
+        var now = DateTimeOffset.Now;
+        if (_lastSearch.TryGetValue(key, out var last) && now - last < TimeSpan.FromSeconds(SearchCooldownSeconds))
+        {
+            EmitLog($"[Search] 这次不搜（同会话 {SearchCooldownSeconds}s 内刚搜过）：{query}");
+            return;
+        }
+
+        _lastSearch[key] = now;
+        EmitLog($"[Search] 模型想搜「{query}」");
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                var result = await _search!.SearchAsync(query, CancellationToken.None);
+                var note = result.Describe();
+                _searchNotes.AddOrUpdate(key, note, (_, old) => old + "\n\n" + note);
+
+                if (!result.HasContent)
+                {
+                    EmitLog($"[Search] 没搜到「{query}」：{result.Error}");
+                }
+
+                // 搜到了就给它一次开口机会（没搜到也给 —— 让它能如实说“没查到”）
+                if (_settings.AiModeEnabled && AllowReply(conversation))
+                {
+                    EnqueueReply(conversation, null);
+                }
+            }
+            catch (Exception ex)
+            {
+                EmitLog($"[Search] 搜「{query}」失败: {ex.Message}");
+            }
+        });
+    }
+
+    /// <summary>后台读一个网页的正文（模型填 read 时），留给下一轮。</summary>
+    private void QueuePageReadAsync(BotConversation conversation, string url)
+    {
+        var key = conversation.SourceKey;
+        EmitLog($"[Search] 模型想读页面 {Shorten(url, 80)}");
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                var (text, error) = await _search!.ReadPageAsync(url, CancellationToken.None);
+                var note = text is null
+                    ? $"读页面「{url}」失败：{error}（如实说没读到就行，别猜页面里写了什么。）"
+                    : $"页面 {url} 的正文（已抽取）：\n{text}";
+
+                _searchNotes.AddOrUpdate(key, note, (_, old) => old + "\n\n" + note);
+                EmitLog(text is null ? $"[Search] 读页面失败：{error}" : $"[Search] 已读到页面正文（{text.Length} 字）");
+
+                if (_settings.AiModeEnabled && AllowReply(conversation))
+                {
+                    EnqueueReply(conversation, null);
+                }
+            }
+            catch (Exception ex)
+            {
+                EmitLog($"[Search] 读页面失败: {ex.Message}");
+            }
+        });
+    }
+
+    /// <summary>面板自测：真跑一次搜索，把结果（或失败原因）原样给面板看。</summary>
+    public async Task<WebSearchResult> TestSearchAsync(string query, CancellationToken ct)
+        => _search is null
+            ? new WebSearchResult(query, null, Array.Empty<WebSearchHit>(), "无", "搜索服务还没初始化")
+            : await _search.SearchAsync(query, ct);
+
+    /// <summary>面板自测：真读一个页面。</summary>
+    public async Task<(string? Text, string? Error)> TestReadPageAsync(string url, CancellationToken ct)
+        => _search is null ? (null, "搜索服务还没初始化") : await _search.ReadPageAsync(url, ct);
 
     /// <summary>最近一次“面板自测听歌”的歌名（给 /api/music/test 回报用）。</summary>
     public string? LastMusicTestHeader { get; private set; }
@@ -1202,6 +1287,21 @@ public sealed class BotAgent : IDisposable
     /// <summary>每个会话最近一次发语音的时间（频率门：语音是“稀罕事”，不能每句都发）。</summary>
     private readonly System.Collections.Concurrent.ConcurrentDictionary<string, DateTimeOffset> _lastVoice = new();
 
+    /// <summary>联网搜索专用 HttpClient：检索要等上游模型回话（含思考），超时给宽松点。</summary>
+    private readonly HttpClient _netHttp = new() { Timeout = TimeSpan.FromSeconds(60) };
+
+    /// <summary>联网搜索：模型自带搜索（Gemini grounding）+ 可插拔搜索源兑底。Start() 里组装。</summary>
+    private WebSearchService? _search;
+
+    /// <summary>每个会话最近一次“上网查”的时间（冷却：搜索要花模型调用与几秒时间，不能反复搜）。</summary>
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, DateTimeOffset> _lastSearch = new();
+
+    /// <summary>每个会话刚查到的资料，交给下一轮回复用（用掉就清）。</summary>
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, string> _searchNotes = new();
+
+    /// <summary>同会话两次联网搜索的最小间隔（秒）。</summary>
+    private const int SearchCooldownSeconds = 30;
+
     /// <summary>听音乐：识别到的分享 → 网易云歌词 + 低码率音频 → 波形分析。Start() 里组装。</summary>
     private MusicService? _music;
 
@@ -1216,6 +1316,85 @@ public sealed class BotAgent : IDisposable
 
     /// <summary>最近一次机器人主动戳人（频率门：一次只戳一个，不参与互戳拉锯）。</summary>
     private readonly System.Collections.Concurrent.ConcurrentDictionary<string, (long TargetId, DateTimeOffset At)> _lastPokeSent = new();
+
+    /// <summary>每个会话最近一次“有人撤回消息”的时间（冷却：连着撤几条时不要每条都评论）。</summary>
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, DateTimeOffset> _lastRecallAt = new();
+
+    /// <summary>每个会话最近一次撤回事件的描述，交给下一轮回复用（用掉就清）。</summary>
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, string> _recallNotes = new();
+
+    /// <summary>同会话两次“评论撤回”的最小间隔（秒）。</summary>
+    private const int RecallCommentCooldownSeconds = 90;
+
+    /// <summary>
+    /// 有人撤回了一条消息。
+    ///
+    /// 为什么不能不管：撤回后群友已经看不到那条了，但机器人手里还有 ——
+    /// 不管的话它下一轮会去接一句“群里已经不存在的消息”，或者把撤回的内容
+    /// 当成公共信息接着聊（对方会觉得“我明明擦掉了”）。
+    /// 做三件事：
+    ///   ① 在上下文里把那条标成 <c>[已撤回] 原内容</c>（内容保留，但一眼能看出被收回去了）；
+    ///   ② 给模型一次开口的机会（“撤回了啥”是人类最常见的反应），带冷却；
+    ///   ③ 提示词里明确：“可以记得，但不要引用/复述/当众开玩笑”。
+    /// </summary>
+    private void OnMessageRecalled(QqRecallEvent recall)
+    {
+        try
+        {
+            // 撤回事件不带昵称，先用它给的身份把会话找到（没有就新建，与戳一戳同一套）
+            var conversation = GetOrCreateConversation(new QqChatMessage(
+                0, recall.IsGroup, recall.UserId, recall.GroupId, string.Empty, string.Empty, recall.Time, false));
+            if (conversation is null)
+            {
+                return;
+            }
+
+            var key = conversation.SourceKey;
+            var target = conversation.Messages.FirstOrDefault(m => m.QqMessageId == recall.MessageId);
+            if (target is null)
+            {
+                // 常见于：那条消息已经被滚动窗口/归档挤掉了 —— 没什么要改的，也不值得评论
+                EmitLog($"[Recall] {conversation.Name}：有一条消息被撤回（id={recall.MessageId}），但它不在当前上下文里");
+                return;
+            }
+
+            if (target.Recalled)
+            {
+                return; // 重复事件：已经标过了，也不再评论
+            }
+
+            target.Recalled = true;
+            Save();
+
+            var sender = target.SenderName ?? ResolveDisplayName(conversation, recall.UserId);
+            var byOther = recall.OperatorId > 0 && recall.OperatorId != recall.UserId
+                ? $"（由 {ResolveDisplayName(conversation, recall.OperatorId)} 撤回）"
+                : string.Empty;
+            EmitLog($"[Recall] {conversation.Name}：{sender} 撤回了一条消息{byOther} —— 原内容（已标进上下文）：{Shorten(target.Text, 40)}");
+
+            var now = DateTimeOffset.Now;
+            if (_lastRecallAt.TryGetValue(key, out var last) &&
+                now - last < TimeSpan.FromSeconds(RecallCommentCooldownSeconds))
+            {
+                EmitLog($"[Recall] 这次不评论（同会话 {RecallCommentCooldownSeconds}s 内已经评论过一次）");
+                return;
+            }
+
+            _lastRecallAt[key] = now;
+            _recallNotes[key] = $"（刚有人撤回了一条消息：{sender}。上下文里那条已经标成 [已撤回] ——" +
+                                "内容是：“{Shorten(target.Text, 40)}”。）";
+            Touch(conversation);
+
+            if (_settings.AiModeEnabled && AllowReply(conversation))
+            {
+                EnqueueReply(conversation, null);
+            }
+        }
+        catch (Exception ex)
+        {
+            EmitLog("[Recall] 处理撤回事件出错: " + ex.Message);
+        }
+    }
 
     /// <summary>从历史消息里找一个人的显示名（昵称/群名片）；找不到就写“成员 <qq>”。</summary>
     private string ResolveDisplayName(BotConversation conversation, long userId)
@@ -1906,6 +2085,12 @@ public sealed class BotAgent : IDisposable
         // 刚“听过”的歌：把歌词与波形实测交给模型，用完就清（避免以后每轮都背上它）
         var musicText = _musicNotes.TryRemove(conversation.SourceKey, out var pendingMusic) ? pendingMusic : null;
 
+        // 刚有人撤回了消息：把这件事告诉模型（但不告诉它撤回了什么）——用完就清
+        var recallText = _recallNotes.TryRemove(conversation.SourceKey, out var pendingRecall) ? pendingRecall : null;
+
+        // 刚上网查到的资料 / 读到的页面正文：交给模型，用完就清
+        var searchText = _searchNotes.TryRemove(conversation.SourceKey, out var pendingSearch) ? pendingSearch : null;
+
         // 链接预览：给快站点 2.5 秒的机会当轮用上；太慢就先不等（完成后留给下一轮）
         if (_linkTasks.TryGetValue(conversation.SourceKey, out var linkTask))
         {
@@ -1925,6 +2110,9 @@ public sealed class BotAgent : IDisposable
                 moodText: moodText,
                 musicText: musicText,
                 linkText: linkText,
+                recallText: recallText,
+                enableWebSearch: _settings.EnableWebSearch,
+                searchText: searchText,
                 enableListen: _settings.EnableMusic,
                 enableVoice: _settings.EnableVoice);
         }
@@ -1950,6 +2138,18 @@ public sealed class BotAgent : IDisposable
         // 表情包：模型可以只发图不说话，也可以“文字 + 图”。
         // 校验一下 id（模型偶发会编造/多空格），拿不到就把这次当成纯文字。
         StickerRecord? sticker = null;
+        // 联网搜索（search / read）：后台去查，拿到结果后再给它一次开口的机会。
+        // 这两个是“两轮动作”—— 模型这轮照常接话（reply 可以写“我去查查”），下一轮拿着事实说。
+        // search 优先于 read：模型一般只会填一个。
+        if (_settings.EnableWebSearch && _search is not null && result.Search is { Length: > 0 } wantedQuery)
+        {
+            QueueWebSearchAsync(conversation, wantedQuery);
+        }
+        else if (_settings.EnableWebSearch && _search is not null && result.Read is { Length: > 0 } pageUrl)
+        {
+            QueuePageReadAsync(conversation, pageUrl);
+        }
+
         // 模型想听一首歌（listen 字段）：后台去搜、去听，听完再给它一次开口的机会。
         // 这是群里说“去听一下 XXX”的唯一入口 —— 不靠正则猜句子，交给模型自己决定。
         if (_settings.EnableMusic && result.Listen is { Length: > 0 } wantedSong && _music is not null)
