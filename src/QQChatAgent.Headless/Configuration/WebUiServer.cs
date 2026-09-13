@@ -531,7 +531,12 @@ public sealed class WebUiServer : IDisposable
             if (body["profileSummaryIntervalSeconds"] is JsonNode psi) s.ProfileSummaryIntervalSeconds = Math.Clamp(psi.GetValue<int>(), 0, 86400);
 
             // ---- 表情包 ----
-            if (body["enableLinkPreview"] is JsonNode elp) s.EnableLinkPreview = elp.GetValue<bool>();
+            if (body["enableVoice"] is JsonNode ev) s.EnableVoice = ev.GetValue<bool>();
+        if (body["voiceName"] is JsonNode vn) s.VoiceName = vn.GetValue<string>().Trim();
+        if (body["voiceSpeed"] is JsonNode vs) s.VoiceSpeed = Math.Clamp(vs.GetValue<int>(), 50, 200);
+        if (body["voiceMaxChars"] is JsonNode vmc) s.VoiceMaxChars = Math.Clamp(vmc.GetValue<int>(), 10, 300);
+        if (body["ttsServiceUrl"] is JsonNode tts) s.TtsServiceUrl = tts.GetValue<string>().Trim();
+        if (body["enableLinkPreview"] is JsonNode elp) s.EnableLinkPreview = elp.GetValue<bool>();
         if (body["linkPreviewTimeoutSeconds"] is JsonNode lpt) s.LinkPreviewTimeoutSeconds = Math.Clamp(lpt.GetValue<int>(), 2, 30);
         if (body["linkPreviewMax"] is JsonNode lpm) s.LinkPreviewMax = Math.Clamp(lpm.GetValue<int>(), 0, 5);
         if (body["enableMusic"] is JsonNode em) s.EnableMusic = em.GetValue<bool>();
@@ -899,7 +904,12 @@ public sealed class WebUiServer : IDisposable
                 ["profileSummaryThreshold"] = s.ProfileSummaryThreshold,
                 ["profileSummaryMaxChars"] = s.ProfileSummaryMaxChars,
                 ["profileSummaryIntervalSeconds"] = s.ProfileSummaryIntervalSeconds,
-                ["enableLinkPreview"] = s.EnableLinkPreview,
+                ["enableVoice"] = s.EnableVoice,
+        ["voiceName"] = s.VoiceName,
+        ["voiceSpeed"] = s.VoiceSpeed,
+        ["voiceMaxChars"] = s.VoiceMaxChars,
+        ["ttsServiceUrl"] = s.TtsServiceUrl,
+        ["enableLinkPreview"] = s.EnableLinkPreview,
         ["linkPreviewTimeoutSeconds"] = s.LinkPreviewTimeoutSeconds,
         ["linkPreviewMax"] = s.LinkPreviewMax,
         ["enableMusic"] = s.EnableMusic,

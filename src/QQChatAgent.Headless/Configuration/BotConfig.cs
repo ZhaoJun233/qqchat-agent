@@ -104,6 +104,11 @@ public static class BotConfig
     [nameof(AppSettings.MusicSources)] = new[] { "QQCHAT_MUSIC_SOURCES" },
     [nameof(AppSettings.NeteaseBaseUrl)] = new[] { "QQCHAT_NETEASE_BASE_URL" },
     [nameof(AppSettings.EnableLinkPreview)] = new[] { "QQCHAT_LINK_PREVIEW" },
+    [nameof(AppSettings.EnableVoice)] = new[] { "QQCHAT_ENABLE_VOICE" },
+    [nameof(AppSettings.VoiceName)] = new[] { "QQCHAT_VOICE" },
+    [nameof(AppSettings.VoiceSpeed)] = new[] { "QQCHAT_VOICE_SPEED" },
+    [nameof(AppSettings.VoiceMaxChars)] = new[] { "QQCHAT_VOICE_MAX_CHARS" },
+    [nameof(AppSettings.TtsServiceUrl)] = new[] { "QQCHAT_TTS_URL" },
     [nameof(AppSettings.LinkPreviewTimeoutSeconds)] = new[] { "QQCHAT_LINK_PREVIEW_TIMEOUT" },
     [nameof(AppSettings.LinkPreviewMax)] = new[] { "QQCHAT_LINK_PREVIEW_MAX" },
     [nameof(AppSettings.MusicBitrate)] = new[] { "QQCHAT_MUSIC_BITRATE" },
@@ -179,6 +184,11 @@ public static class BotConfig
         s.MusicSources = Str("QQCHAT_MUSIC_SOURCES") ?? s.MusicSources;
         s.NeteaseBaseUrl = Str("QQCHAT_NETEASE_BASE_URL") ?? s.NeteaseBaseUrl;
         s.EnableLinkPreview = Bool("QQCHAT_LINK_PREVIEW") ?? s.EnableLinkPreview;
+        s.EnableVoice = Bool("QQCHAT_ENABLE_VOICE") ?? s.EnableVoice;
+        s.VoiceName = Str("QQCHAT_VOICE") ?? s.VoiceName;
+        s.VoiceSpeed = Int("QQCHAT_VOICE_SPEED") ?? s.VoiceSpeed;
+        s.VoiceMaxChars = Int("QQCHAT_VOICE_MAX_CHARS") ?? s.VoiceMaxChars;
+        s.TtsServiceUrl = Str("QQCHAT_TTS_URL") ?? s.TtsServiceUrl;
         s.LinkPreviewTimeoutSeconds = Int("QQCHAT_LINK_PREVIEW_TIMEOUT") ?? s.LinkPreviewTimeoutSeconds;
         s.LinkPreviewMax = Int("QQCHAT_LINK_PREVIEW_MAX") ?? s.LinkPreviewMax;
         s.MusicBitrate = Int("QQCHAT_MUSIC_BITRATE") ?? s.MusicBitrate;

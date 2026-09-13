@@ -151,6 +151,26 @@ public sealed class AppSettings
     /// <summary>同时向模型发起的最大请求数（按会话串行、跨会话并发）。</summary>
     public int MaxConcurrentReplies { get; set; } = 2;
 
+    // ---------- 语音消息（TTS）----------
+
+    /// <summary>
+    /// 启用语音消息：机器人可以用语音说话（模型在 JSON 里填 speak 字段时）。
+    /// 默认关 —— 语音比文字“重”，且需要先部署 TTS 服务。
+    /// </summary>
+    public bool EnableVoice { get; set; }
+
+    /// <summary>音色（Piper 模型名）。可选：zh_CN-huayan-medium / zh_CN-huayan-x_low / zh_CN-xiao_ya-medium / zh_CN-chaowen-medium。</summary>
+    public string VoiceName { get; set; } = "zh_CN-huayan-medium";
+
+    /// <summary>语速（百分比，100 = 原速）。</summary>
+    public int VoiceSpeed { get; set; } = 100;
+
+    /// <summary>单条语音的字数上限：超过就不发语音（长了又慢又费流量，不如打字）。</summary>
+    public int VoiceMaxChars { get; set; } = 80;
+
+    /// <summary>TTS 服务地址（Piper 旁路容器，提供 /speak?text=… 返回 wav）。</summary>
+    public string TtsServiceUrl { get; set; } = "http://tts:5000";
+
     // ---------- 链接与分享卡片 ----------
 
     /// <summary>群里发的链接要不要真打开看一下（取标题/摘要）——给模型“看看里面写了什么”的根据。</summary>

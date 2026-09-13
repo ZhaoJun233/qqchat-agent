@@ -421,6 +421,48 @@
           <p class="path-hint" id="musicHint"></p>
         </div>
 
+        <!-- 语音消息 -->
+        <div class="card">
+          <div class="card-head">
+            <h3>语音消息</h3>
+            <p>机器人可以用<b>语音</b>说话（模型在 JSON 里填 <code>speak</code> 字段时）。
+              合成走 Piper（CPU 就能实时出音）旁路服务，默认<b>关闭</b> —— 语音比文字“重”，想让它偶尔开口再开。</p>
+          </div>
+
+          <label class="switch-row">
+            <input type="checkbox" id="setEnableVoice" />
+            <span class="switch"></span>
+            <span>启用语音消息（模型可以要求“用语音说这句”）</span>
+          </label>
+
+          <div class="grid-2">
+            <div class="field">
+              <label>音色<span class="hint">Piper 模型名；中文现成音色见下方候选</span></label>
+              <input type="text" id="setVoiceName" list="voiceNameOptions" maxlength="60" placeholder="zh_CN-huayan-medium" />
+              <datalist id="voiceNameOptions">
+                <option value="zh_CN-huayan-medium">华研（女声·中质量，默认）</option>
+                <option value="zh_CN-huayan-x_low">华研（女声·低质量，更快）</option>
+                <option value="zh_CN-xiao_ya-medium">小雅（女声·中质量）</option>
+                <option value="zh_CN-chaowen-medium">朝文（男声·中质量）</option>
+              </datalist>
+            </div>
+            <div class="field">
+              <label>语速（%）<span class="hint">100 = 原速</span></label>
+              <input type="number" id="setVoiceSpeed" min="50" max="200" step="5" />
+            </div>
+            <div class="field">
+              <label>单条语音字数上限<span class="hint">超过了就不发语音（又慢又费流量，不如打字）</span></label>
+              <input type="number" id="setVoiceMaxChars" min="10" max="300" step="10" />
+            </div>
+            <div class="field">
+              <label>TTS 服务地址<span class="hint">Piper 旁路容器，提供 /speak?text=… 返回 wav</span></label>
+              <input type="text" id="setTtsServiceUrl" maxlength="120" placeholder="http://tts:5000" />
+            </div>
+          </div>
+
+          <p class="path-hint" id="voiceHint">换音色就是换一个 onnx 模型（音色即模型）；想复现某个特定人的音色需先拿到授权并单独训练。</p>
+        </div>
+
         <!-- 链接与分享 -->
         <div class="card">
           <div class="card-head">

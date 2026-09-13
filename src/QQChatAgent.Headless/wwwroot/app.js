@@ -861,6 +861,11 @@
     $("setMusicKeepAudio").checked = r.musicKeepAudio === true;
     $("musicHint").textContent = "网易云 Cookie：" + (r.neteaseCookieSet ? "已设置（环境变量）" : "未设置（可选）");
     $("setEnableLinkPreview").checked = r.enableLinkPreview !== false;
+    $("setEnableVoice").checked = r.enableVoice === true;
+    $("setVoiceName").value = r.voiceName || "";
+    $("setVoiceSpeed").value = r.voiceSpeed;
+    $("setVoiceMaxChars").value = r.voiceMaxChars;
+    $("setTtsServiceUrl").value = r.ttsServiceUrl || "";
     $("setLinkPreviewTimeout").value = r.linkPreviewTimeoutSeconds;
     $("setLinkPreviewMax").value = r.linkPreviewMax;
 
@@ -938,6 +943,11 @@
       neteaseBaseUrl: $("audioNeteaseBase").value.trim(),
       musicKeepAudio: $("setMusicKeepAudio").checked,
       enableLinkPreview: $("setEnableLinkPreview").checked,
+      enableVoice: $("setEnableVoice").checked,
+      voiceName: $("setVoiceName").value.trim(),
+      voiceSpeed: Number($("setVoiceSpeed").value),
+      voiceMaxChars: Number($("setVoiceMaxChars").value),
+      ttsServiceUrl: $("setTtsServiceUrl").value.trim(),
       linkPreviewTimeoutSeconds: Number($("setLinkPreviewTimeout").value),
       linkPreviewMax: Number($("setLinkPreviewMax").value)
     };
