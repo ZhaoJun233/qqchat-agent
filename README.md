@@ -96,12 +96,6 @@ dotnet tests/QQChatAgent.IntegrationHarness/bin/Release/net8.0/QQChatAgent.Integ
 
 > 注意：测试工程没有引用机器人工程，**改完机器人代码要单独 build 它**，否则跑的还是旧 DLL。
 
-## 🙏 来源与致谢
-
-- 本项目的容器版是在上游桌面版 [ftl-is-king/QQchat](https://github.com/ftl-is-king/QQchat)（WinUI 3 / .NET 8，作者 [@ftl-is-king](https://github.com/ftl-is-king)）的 Agent 逻辑基础上重写为无界面服务的：
-  保留了它的会话/档案/提示词思路，替换了宿主、传输编排与持久化，并补上了表情包、戳一戳、心情、面板等能力。
-- [NapCat](https://github.com/NapNeko/NapCatQQ)（QQ 协议桥接，遵循其自有《Limited Redistribution License》，非商业）、OneBot v11 协议、.NET 8。
-
 ## 📄 License
 
 本程序源码 MIT。NapCat 本体遵循其自有许可证（非商业），请在使用时遵守。
