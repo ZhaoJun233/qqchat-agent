@@ -28,6 +28,14 @@ public sealed class NeteaseMusicClient
         _log = log;
     }
 
+    /// <summary>
+    /// 两套接口风格：
+    ///  • official：music.163.com 官方接口（匿名时音频一律 404，搜索结果质量很差）
+    ///  • enhanced：自建的 NeteaseCloudMusicApiEnhanced（路径不同，但能搜准、能直接给音频地址）
+    /// 判断方式就用 base URL —— 指向了自建服务就一定是 enhanced，不用多一个开关。
+    /// </summary>
+    private bool Enhanced => !_baseUrl().Contains("music.163.com", StringComparison.OrdinalIgnoreCase);
+
     /// <summary>查歌曲详情 + 歌词。失败返回 null（调用方要能优雅降级成“只有标题”）。</summary>
     public async Task<MusicInfo?> FetchAsync(string songId, CancellationToken ct)
     {
@@ -42,7 +50,7 @@ public sealed class NeteaseMusicClient
 
         try
         {
-            var detail = await GetJsonAsync(string.Format(DetailPath, songId), ct);
+            var detail = await GetJsonAsync(Enhanced ? $"/song/detail?ids={songId}" : string.Format(DetailPath, songId), ct);
             var song = detail is { } d && d.TryGetProperty("songs", out var songs) && songs.ValueKind == JsonValueKind.Array && songs.GetArrayLength() > 0
                 ? songs[0]
                 : (JsonElement?)null;
@@ -68,7 +76,7 @@ public sealed class NeteaseMusicClient
         string? lyric = null, tlyric = null;
         try
         {
-            var lrc = await GetJsonAsync(string.Format(LyricPath, songId), ct);
+            var lrc = await GetJsonAsync(Enhanced ? $"/lyric?id={songId}" : string.Format(LyricPath, songId), ct);
             if (lrc is { } l)
             {
                 if (l.TryGetProperty("lrc", out var lrcObj) && lrcObj.TryGetProperty("lyric", out var text))
@@ -108,7 +116,9 @@ public sealed class NeteaseMusicClient
 
         try
         {
-            var path = "/api/search/get?s=" + Uri.EscapeDataString(keyword.Trim()) + "&type=1&limit=10&offset=0";
+            var path = Enhanced
+                ? "/search?keywords=" + Uri.EscapeDataString(keyword.Trim()) + "&limit=10"
+                : "/api/search/get?s=" + Uri.EscapeDataString(keyword.Trim()) + "&type=1&limit=10&offset=0";
             var json = await GetJsonAsync(path, ct);
             var candidates = json is { } root && root.TryGetProperty("result", out var result) &&
                              result.TryGetProperty("songs", out var songs) && songs.ValueKind == JsonValueKind.Array
@@ -187,6 +197,38 @@ public sealed class NeteaseMusicClient
         }
 
         return score;
+    }
+
+    /// <summary>
+    /// 向自建 Enhanced API 要音频播放地址（官方接口拿不到，自建的能）。
+    /// 拿到就直接当“直链”用，不用再去求第三方 Meting 实例。
+    /// </summary>
+    public async Task<string?> GetAudioUrlAsync(string songId, CancellationToken ct)
+    {
+        if (!Enhanced || string.IsNullOrWhiteSpace(songId))
+        {
+            return null;
+        }
+
+        try
+        {
+            var json = await GetJsonAsync($"/song/url/v1?id={songId}&level=standard", ct);
+            var url = json is { } root && root.TryGetProperty("data", out var data) && data.ValueKind == JsonValueKind.Array && data.GetArrayLength() > 0 &&
+                      data[0].TryGetProperty("url", out var u) && u.ValueKind == JsonValueKind.String
+                ? u.GetString()
+                : null;
+            if (string.IsNullOrWhiteSpace(url))
+            {
+                _log($"[Music] 自建接口没给音频地址（id={songId}，可能是 VIP 歌，需登录 cookie）");
+            }
+
+            return string.IsNullOrWhiteSpace(url) ? null : url;
+        }
+        catch (Exception ex)
+        {
+            _log($"[Music] 取自建接口音频地址失败（id={songId}）: {ex.Message}");
+            return null;
+        }
     }
 
     /// <summary>跟进短链跳转，拿到最终地址（网易云分享短链 163cn.tv / 手机分享链）。</summary>

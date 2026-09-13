@@ -857,6 +857,7 @@
     $("setMusicListenCooldown").value = r.musicListenCooldownSeconds;
     $("setMusicUnderstandModel").value = r.musicUnderstandModel || "";
     $("setMusicSendAudio").checked = r.musicSendAudioToModel !== false;
+    $("audioNeteaseBase").value = r.neteaseBaseUrl || "";
     $("setMusicKeepAudio").checked = r.musicKeepAudio === true;
     $("musicHint").textContent = "网易云 Cookie：" + (r.neteaseCookieSet ? "已设置（环境变量）" : "未设置（可选）");
     $("setEnableLinkPreview").checked = r.enableLinkPreview !== false;
@@ -934,6 +935,7 @@
       musicListenCooldownSeconds: Number($("setMusicListenCooldown").value),
       musicUnderstandModel: $("setMusicUnderstandModel").value.trim(),
       musicSendAudioToModel: $("setMusicSendAudio").checked,
+      neteaseBaseUrl: $("audioNeteaseBase").value.trim(),
       musicKeepAudio: $("setMusicKeepAudio").checked,
       enableLinkPreview: $("setEnableLinkPreview").checked,
       linkPreviewTimeoutSeconds: Number($("setLinkPreviewTimeout").value),
@@ -1239,8 +1241,60 @@
     if ((localStorage.getItem("qqchat.theme") || "system") === "system") applyTheme("system");
   });
 
+  // ── 音频源接入弹窗：自己编辑/添加音源接口，并可以当场试听一首验证 ──
+  // 不另存一份配置：弹窗里的字段就是设置页对应字段的“放大版”，
+  // 关弹窗/试听前写回去，保存与回填契约始终只有一处（探针在盯这个）。
+  function openAudioSources() {
+    $("audioSources").value = $("setMusicSources").value;
+    $("audioModel").value = $("setMusicUnderstandModel").value;
+    $("audioTestOut").textContent = "";
+    $("audioModal").hidden = false;
+  }
+
+  function writeBackAudioSources() {
+    $("setMusicSources").value = $("audioSources").value;
+    $("setMusicUnderstandModel").value = $("audioModel").value;
+  }
+
+  function bindAudioSources() {
+    $("openAudioSources").addEventListener("click", openAudioSources);
+    $("audioClose").addEventListener("click", () => { writeBackAudioSources(); $("audioModal").hidden = true; });
+
+    // 一键填预设：公开音源会挂、会改参数，能随手改才是关键
+    const presets = [
+      ["audioPresetMeting", "meting|https://api.qijieya.cn/meting/?type=url&id={id}&br={br}"],
+      ["audioPresetGdstudio", "gdstudio|https://music-api.gdstudio.xyz/api.php?types=url&source=netease&id={id}&br={br}&s={crc32}"],
+      ["audioPresetDirect", "direct|https://example.com/song/{id}.mp3"]
+    ];
+    presets.forEach(([id, line]) => {
+      $(id).addEventListener("click", () => {
+        const box = $("audioSources");
+        box.value = (box.value.trim() ? box.value.trim() + "\n" : "") + line;
+      });
+    });
+    $("audioClear").addEventListener("click", () => { $("audioSources").value = ""; });
+
+    $("audioTestGo").addEventListener("click", async () => {
+      const song = $("audioTestSong").value.trim();
+      if (!song) { toast("先填个歌名"); return; }
+      const out = $("audioTestOut");
+      out.textContent = "正在试听…（搜歌 → 歌词 → 音频 → 波形分析 → 模型听感，可能要十几秒）";
+      try {
+        writeBackAudioSources();      // 先把弹窗里的改动写回设置，否则测的还是旧配置
+        await saveSettings();
+        const r = await api("/api/music/test", { method: "POST", body: JSON.stringify({ song }) });
+        out.textContent = r && r.ok ? r.note : "没听到：" + ((r && r.note) || "（无返回）");
+      } catch (err) {
+        out.textContent = "试听失败：" + err.message;
+      }
+    });
+
+    $("musicTestNow").addEventListener("click", () => { openAudioSources(); });
+  }
+
   async function boot() {
     bindUi();
+    bindAudioSources();
     renderAiMode();
     renderMessages();
     syncMobileView();   // 刷新后回到列表视图，不要停在某个会话上

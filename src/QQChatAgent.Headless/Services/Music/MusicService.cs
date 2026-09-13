@@ -82,7 +82,9 @@ public sealed partial class MusicService
 
         if (features is null && songId is { Length: > 0 })
         {
-            var audio = await _audio.DownloadAsync(share with { SongId = songId }, ct);
+            // 自建 Enhanced 接口能直接给播放地址（官方接口给不了）→ 优先用它，不用再去求第三方音源
+            var directUrl = await _netease.GetAudioUrlAsync(songId, ct);
+            var audio = await _audio.DownloadAsync(share with { SongId = songId, DirectAudioUrl = directUrl ?? share.DirectAudioUrl }, ct);
             if (audio is null)
             {
                 _log($"[Music] {share.Describe()} 没拿到音源（只按歌词处理）");

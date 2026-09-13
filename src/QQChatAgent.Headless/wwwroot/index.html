@@ -410,6 +410,12 @@
             <span class="switch"></span>
             <span>保留下载的音频<span class="hint">默认分析完就删；打开后留在 data/music/audio</span></span>
           </label>
+          <div class="sticker-actions">
+            <button class="ghost-btn" id="openAudioSources">音频源接入…</button>
+            <button class="ghost-btn" id="musicTestNow">试听一首（当场验证）</button>
+            <span class="path-hint" id="musicTestHint"></span>
+          </div>
+
           <p class="path-hint" id="musicHint"></p>
         </div>
 
@@ -543,6 +549,50 @@
       <button class="ghost-btn small" id="stickerImport">导入收藏表情</button>
     </div>
     <div class="sticker-grid" id="stickerGrid"></div>
+  </div>
+</div>
+
+<div class="modal" id="audioModal" hidden>
+  <div class="modal-card">
+    <div class="modal-head">
+      <h3>音频源接入</h3>
+      <button id="audioClose">✕</button>
+    </div>
+
+    <p class="path-hint">音源按顺序尝试，第一个能拿到音频的就用它。占位符：<code>{id}</code> 歌曲 id、<code>{br}</code> 码率、<code>{crc32}</code> 标准 CRC32（8 位大写十六进制）。
+      点下面的预设按钮可以一键填入常见的公开音源，改完记得保存设置。</p>
+
+    <div class="sticker-toolbar">
+      <button class="ghost-btn small" id="audioPresetMeting">＋ Meting 实例</button>
+      <button class="ghost-btn small" id="audioPresetGdstudio">＋ GDStudio</button>
+      <button class="ghost-btn small" id="audioPresetDirect">＋ 直链模板</button>
+      <button class="ghost-btn small" id="audioClear">清空</button>
+    </div>
+
+    <div class="field">
+      <label>音源模板（一行一条）</label>
+      <textarea id="audioSources" rows="6" spellcheck="false" placeholder="meting|https://api.qijieya.cn/meting/?type=url&id={id}&br={br}"></textarea>
+    </div>
+
+    <div class="grid-2">
+      <div class="field">
+        <label>网易云接口地址<span class="hint">默认官方；可指向自建代理</span></label>
+        <input type="text" id="audioNeteaseBase" placeholder="https://music.163.com" />
+      </div>
+      <div class="field">
+        <label>音频识别模型<span class="hint">专门用来“听”的模型</span></label>
+        <input type="text" id="audioModel" maxlength="80" placeholder="gemini-3.7-flash-high" />
+      </div>
+    </div>
+
+    <div class="field">
+      <label>当场试听一首<span class="hint">用当前输入的音源跑一遍：搜歌 → 歌词 → 低码率音频 → 波形分析 → 模型听感</span></label>
+      <div style="display:flex;gap:8px">
+        <input type="text" id="audioTestSong" placeholder="歌名 歌手（例如：起风了 买辣椒也用券）" style="flex:1" />
+        <button class="ghost-btn" id="audioTestGo">试听</button>
+      </div>
+      <pre id="audioTestOut" class="path-hint" style="white-space:pre-wrap;max-height:240px;overflow:auto"></pre>
+    </div>
   </div>
 </div>
 

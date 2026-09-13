@@ -528,6 +528,7 @@ public sealed class WebUiServer : IDisposable
         if (body["linkPreviewTimeoutSeconds"] is JsonNode lpt) s.LinkPreviewTimeoutSeconds = Math.Clamp(lpt.GetValue<int>(), 2, 30);
         if (body["linkPreviewMax"] is JsonNode lpm) s.LinkPreviewMax = Math.Clamp(lpm.GetValue<int>(), 0, 5);
         if (body["enableMusic"] is JsonNode em) s.EnableMusic = em.GetValue<bool>();
+        if (body["neteaseBaseUrl"] is JsonNode nbu) s.NeteaseBaseUrl = nbu.GetValue<string>().Trim();
         if (body["musicSources"] is JsonNode ms) s.MusicSources = ms.GetValue<string>();
         if (body["musicBitrate"] is JsonNode mb) s.MusicBitrate = Math.Clamp(mb.GetValue<int>(), 32, 320);
         if (body["musicMaxDownloadMb"] is JsonNode mmd) s.MusicMaxDownloadMb = Math.Clamp(mmd.GetValue<int>(), 1, 64);
@@ -895,6 +896,7 @@ public sealed class WebUiServer : IDisposable
         ["linkPreviewTimeoutSeconds"] = s.LinkPreviewTimeoutSeconds,
         ["linkPreviewMax"] = s.LinkPreviewMax,
         ["enableMusic"] = s.EnableMusic,
+        ["neteaseBaseUrl"] = s.NeteaseBaseUrl,
         ["musicSources"] = s.MusicSources,
         ["musicBitrate"] = s.MusicBitrate,
         ["musicMaxDownloadMb"] = s.MusicMaxDownloadMb,
