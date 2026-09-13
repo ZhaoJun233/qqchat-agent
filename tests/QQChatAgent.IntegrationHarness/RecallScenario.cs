@@ -22,6 +22,7 @@ public static partial class Program
         const int panelPort = 18101;
         const long groupId = 66687;
         const long friendId = 30111;
+        const long friendId2 = 30114;
 
         var dataDir = NewDataDir("s25");
         using var openAi = new MockOpenAi(openAiPort);
@@ -37,7 +38,7 @@ public static partial class Program
             ["QQCHAT_ONEBOT_PROTOCOL"] = "ReverseWebSocket",
             ["QQCHAT_ONEBOT_URL"] = $"http://0.0.0.0:{botWsPort}",
             ["QQCHAT_UIN"] = "10001",
-            ["QQCHAT_WHITELIST"] = $"{groupId},{friendId}",
+            ["QQCHAT_WHITELIST"] = $"{groupId},{friendId},30114",
             ["QQCHAT_GROUP_COOLDOWN"] = "0",
             ["QQCHAT_PRIVATE_COOLDOWN"] = "0",
             ["QQCHAT_SPLIT_REPLIES"] = "0",
@@ -61,8 +62,10 @@ public static partial class Program
         await WaitForSendsAsync(protocol, 1, TimeSpan.FromSeconds(30));
 
         // ---- 2) 撤回它 ----
+        // 故意让模型把一个**已撤回**的消息填进 replyTo（9501）：机器人必须拒掉这个引用 ——
+        // 线上就是这么出错的一条：“回复”挂着一条群里已经看不到的消息。
         openAi.ClearRequests();
-        openAi.EnqueueReply("""{"suitability": 85, "reply": "哎？撤回了啥"}""");
+        openAi.EnqueueReply($$"""{"suitability": 85, "reply": "哎？撤回了啥", "replyTo": 9501}""");
         var mark = protocol.ActionsReceived.Count;
         await protocol.SendGroupRecallAsync(groupId, 30201, 9501, ct: cts.Token);
 
@@ -85,7 +88,7 @@ public static partial class Program
         Check("★ 机器人评论了这次撤回（本轮真的发出去了）",
             recallSends.Any(a => MessageText(a).Contains("撤回了啥")),
             $"本轮发出 {recallSends.Count} 条：{string.Join(" | ", recallSends.Select(MessageText))}");
-        Check("★ 评论不带引用（触发它的不是消息，引用会挂错人）",
+        Check("★ 评论不带引用（即使模型硬要把已撤回的那条填进 replyTo，也要被拒掉）",
             recallSends.All(a => QuotedMessageId(a) is null));
 
         // 面板要能看出这条被撤回了（运维视角看得到原文，但要标明模型看不到）
@@ -125,5 +128,34 @@ public static partial class Program
             TimeSpan.FromSeconds(15));
         Check("★ 私聊里也会评论一句（且只发私聊，不发群）",
             PrivateSendsSince(protocol, privateMark).Any(a => MessageText(a).Contains("撤了就撤了")));
+
+        // ---- 5) 手误更正：撤回之后同一个人又发了新消息 → 不点评（只标记）----
+        //  真实案例：群友把“固定bpc”改成“固定npc”撤回了上一条，机器人却回“鬼鬼祟祟撤回什么呢，我都看见了！”
+        openAi.ClearRequests();
+        openAi.EnqueueReply("""{"suitability": 80, "reply": "懂了。"}""");
+        await protocol.SendPrivateMessageAsync(friendId2, "群友B", "他是这里的固定bpc", 9510, ct: cts.Token);
+        await WaitForSendsAsync(protocol, 1, TimeSpan.FromSeconds(30), "send_private_msg");
+
+        openAi.EnqueueReply("""{"suitability": 80, "reply": "嗯，npc。"}""");
+        await protocol.SendPrivateMessageAsync(friendId2, "群友B", "他是这里的固定npc", 9511, ct: cts.Token);
+        await WaitUntilAsync(() => PrivateSendsSince(protocol, 0).Any(a => MessageText(a).Contains("npc")),
+            TimeSpan.FromSeconds(20));
+
+        openAi.ClearRequests();
+        var correctedMark = protocol.ActionsReceived.Count;
+        await protocol.SendFriendRecallAsync(friendId2, 9510, ct: cts.Token);
+        await Task.Delay(5000);
+
+        Check("★ 看出“手误更正”（撤回后同一个人又发了新消息）→ 不给模型开口机会",
+            bot.OutputLines.Any(l => l.Contains("看起来是手误更正")),
+            string.Join(" | ", bot.OutputLines.Where(l => l.Contains("[Recall]")).TakeLast(3)));
+        Check("★ 但标记照做（那条仍然变成 [已撤回]）",
+            !PrivateSendsSince(protocol, correctedMark).Any(),
+            $"撤回后又发了 {PrivateSendsSince(protocol, correctedMark).Count} 条");
+
+        var (corrStatus, corrBody) = await HttpGetAsync($"http://127.0.0.1:{panelPort}/api/conversations/private%3A{friendId2}");
+        Check("★ 手误更正的那条在面板里也是 recalled（标记与点评分开决策）",
+            corrStatus == 200 && corrBody.Contains("\"recalled\":true"),
+            corrBody.Length > 200 ? corrBody[^200..] : corrBody);
     }
 }

@@ -1366,8 +1366,7 @@ public sealed class BotAgent : IDisposable
             target.Recalled = true;
             Save();
 
-            var sender = target.SenderName ?? ResolveDisplayName(conversation, recall.UserId);
-            var byOther = recall.OperatorId > 0 && recall.OperatorId != recall.UserId
+            var sender = target.SenderName ?? ResolveDisplayName(conversation, recall.UserId);            var byOther = recall.OperatorId > 0 && recall.OperatorId != recall.UserId
                 ? $"（由 {ResolveDisplayName(conversation, recall.OperatorId)} 撤回）"
                 : string.Empty;
             EmitLog($"[Recall] {conversation.Name}：{sender} 撤回了一条消息{byOther} —— 原内容（已标进上下文）：{Shorten(target.Text, 40)}");
@@ -1381,8 +1380,22 @@ public sealed class BotAgent : IDisposable
             }
 
             _lastRecallAt[key] = now;
-            _recallNotes[key] = $"（刚有人撤回了一条消息：{sender}。上下文里那条已经标成 [已撤回] ——" +
-                                "内容是：“{Shorten(target.Text, 40)}”。）";
+
+            // 手误更正：撤回后同一个人又发了新消息（实测：把“固定bpc”改成“固定npc”）——
+            // 这种时候去点评“撤回了啥”很尴尬（群里实测被怼过）。人类的做法是当没看见。
+            var corrected = conversation.Messages.Any(m =>
+                m.Role == MessageRole.Peer &&
+                m.SenderId == target.SenderId &&
+                m.Seq > target.Seq &&
+                !m.Recalled);
+            if (corrected)
+            {
+                EmitLog("[Recall] 看起来是手误更正（同一个人随后又发了消息）→ 不给模型开口机会，只标记");
+                Save();
+                return;
+            }
+
+            _recallNotes[key] = $"（刚有人撤回了一条消息：{sender}。上下文里那条已标成 [已撤回]。）";
             Touch(conversation);
 
             if (_settings.AiModeEnabled && AllowReply(conversation))
@@ -2306,7 +2319,10 @@ public sealed class BotAgent : IDisposable
 
         long? replyTo = null;
         if (result.ReplyToMessageId is long chosen &&
-            context.Any(m => m.QqMessageId == chosen) &&
+            // 已撤回的不算：引用一条群里已经看不到的消息，群友看到的就是莫名其妙
+            // （实测踩过：模型从历史里拿了一个已被撤回的 id 填 replyTo，BotAgent 这边只校验
+            //  “它在不在上下文里”—— 结果是给一条已撤回的消息挂了引用）
+            context.Any(m => m.QqMessageId == chosen && !m.Recalled) &&
             IndexOfMessage(messages, chosen) >= 0)
         {
             replyTo = chosen;
@@ -2315,7 +2331,7 @@ public sealed class BotAgent : IDisposable
         {
             replyTo = triggerIsCurrent
                 ? triggerMessageId
-                : context.LastOrDefault(m => m.Role == MessageRole.Peer && m.QqMessageId is > 0)?.QqMessageId;
+                : context.LastOrDefault(m => m.Role == MessageRole.Peer && !m.Recalled && m.QqMessageId is > 0)?.QqMessageId;
         }
 
         // 没有触发消息就**不引用**（戳一戳、主动发言都是这种）。
