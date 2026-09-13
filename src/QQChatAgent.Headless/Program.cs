@@ -2,6 +2,7 @@ using System.Runtime.InteropServices;
 using QQChatAgent.Configuration;
 using QQChatAgent.Services;
 using QQChatAgent.Services.Agent;
+using QQChatAgent.Services.Data;
 using QQChatAgent.Services.NapCat;
 using QQChatAgent.Services.OneBot;
 
@@ -43,6 +44,11 @@ public static class Program
         {
             return await ProbeHealthAsync();
         }
+
+        // ---------- 数据层：先建库（并一次性把老 JSON 导进来），再读配置 ----------
+        // 顺序很重要：BotConfig.Load() 会从 settings 表读配置，之前必须把库准备好。
+        AppDatabase.Initialize();
+        LegacyJsonImporter.ImportIfNeeded();
 
         // ---------- 配置 ----------
         var settings = BotConfig.Load();

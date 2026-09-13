@@ -22,8 +22,6 @@ public static partial class Program
         const int panelPort = 18096;
         const long groupId = 66691;
         var dataDir = NewDataDir("s21");
-        var settingsPath = Path.Combine(dataDir, "data", "settings.json");
-        var secretsPath = Path.Combine(dataDir, "data", "secrets.json");
 
         using var openAiA = new MockOpenAi(openAiPortA);
         openAiA.Start();
@@ -90,21 +88,21 @@ public static partial class Program
             $"B 收到 {openAiB.Requests.Count} 次；A 共 {openAiA.Requests.Count} 次");
         Check("★ 请求里带的是面板里填的模型名", modelInRequest == "model-from-panel", $"实际 model={modelInRequest}");
 
-        // ---- 4) 落盘与“密钥不落 settings.json” ----
+        // ---- 4) 落库与“密钥不落 settings” ----
         await Task.Delay(700);
-        var settingsJson = File.Exists(settingsPath) ? File.ReadAllText(settingsPath, Encoding.UTF8) : string.Empty;
-        var secretsJson = File.Exists(secretsPath) ? File.ReadAllText(secretsPath, Encoding.UTF8) : string.Empty;
-        Check("面板改的 Base URL / 模型名写进了 settings.json（重启不回滚）",
+        var settingsJson = DbProbe.Text(dataDir, "SELECT json FROM settings WHERE id = 1") ?? string.Empty;
+        var secretsValue = DbProbe.Text(dataDir, "SELECT value FROM secrets WHERE name = 'apiKey'") ?? string.Empty;
+        Check("面板改的 Base URL / 模型名写进了配置（重启不回滚）",
             settingsJson.Contains(openAiB.BaseUrl) && settingsJson.Contains("model-from-panel"),
             Truncate(settingsJson, 300));
-        Check("★ 密钥**没有**写进 settings.json（那份文件会被贴出来排障）",
+        Check("★ 密钥**没有**写进配置（那份配置会被贴出来排障）",
             !settingsJson.Contains(newKey) && !settingsJson.Contains(oldKeyFromEnvPlaceholder()),
             Truncate(settingsJson, 300));
-        Check("★ 密钥单独存在 data/secrets.json 里", secretsJson.Contains(newKey), Truncate(secretsJson, 200));
+        Check("★ 密钥单独存在 secrets 表里", secretsValue.Contains(newKey), Truncate(secretsValue, 200));
         if (!OperatingSystem.IsWindows())
         {
-            var mode = File.GetUnixFileMode(secretsPath);
-            Check("secrets.json 权限是 600（仅本进程可读）",
+            var mode = File.GetUnixFileMode(DbProbe.DbPath(dataDir));
+            Check("库文件权限是 600（里面装着密钥）",
                 mode == (UnixFileMode.UserRead | UnixFileMode.UserWrite), mode.ToString());
         }
 
@@ -150,9 +148,9 @@ public static partial class Program
             }
 
             await Task.Delay(700);
-            var secretsAfter = File.Exists(secretsPath) ? File.ReadAllText(secretsPath, Encoding.UTF8) : string.Empty;
+            var secretsAfter = DbProbe.Text(dataDir, "SELECT value FROM secrets WHERE name = 'apiKey'") ?? string.Empty;
             var (_, body2) = await HttpGetAsync($"http://127.0.0.1:{panelPort}/api/settings");
-            Check("★ 清空后密钥文件里不再有它，且来源回到环境变量",
+            Check("★ 清空后密钥不再存在库里，且来源回到环境变量",
                 !secretsAfter.Contains(newKey) && body2.Contains("\"apiKeySource\":\"env\""),
                 Truncate(body2, 300));
 

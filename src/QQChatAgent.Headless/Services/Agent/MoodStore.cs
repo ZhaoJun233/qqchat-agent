@@ -1,11 +1,10 @@
-using System.Text;
 using System.Text.Json;
-using System.Text.Json.Serialization;
+using QQChatAgent.Services.Data;
 
 namespace QQChatAgent.Services.Agent;
 
 /// <summary>
-/// 机器人的“当前心情”。
+/// 机器人的“当前心情”。持久化在 SQLite：<c>mood</c>（模型写的那句话）+ <c>mood_pokes</c>（被戳的时刻）。
 ///
 /// 为什么要它：被戳一戳时，代码原来只有“回话 + 想戳回去就戳回去”这一条路，
 /// 群里实测就是**每次被戳都戳回去**（18:40 那次 4 次被戳回了 3 次），看着像个复读机。
@@ -34,7 +33,7 @@ public sealed class MoodStore
 
     private readonly object _gate = new();
     private readonly List<long> _pokeTimes = new();
-    private string _filePath = string.Empty;
+    private bool _loaded;
 
     /// <summary>模型写的心情（一句话）；空 = 还没写过，用代码按被戳次数描述。</summary>
     public string? Text { get; private set; }
@@ -42,9 +41,9 @@ public sealed class MoodStore
     /// <summary>心情更新时间（用来在提示词里说明“这是多久前的心情”）。</summary>
     public DateTimeOffset? UpdatedAt { get; private set; }
 
+    /// <summary>从库里读一次（进程启动时调用）。参数保留是为了不改调用方签名。</summary>
     public void Load(string dataRoot)
     {
-        _filePath = Path.Combine(dataRoot, "data", "mood.json");
         lock (_gate)
         {
             _pokeTimes.Clear();
@@ -53,24 +52,22 @@ public sealed class MoodStore
 
             try
             {
-                if (!File.Exists(_filePath))
+                var row = AppDatabase.Query("SELECT text, updated_unix FROM mood WHERE id = 1", r => (
+                    Text: AppDatabase.Str(r, "text"),
+                    Updated: AppDatabase.LongOrNull(r, "updated_unix")));
+
+                if (row.Count > 0)
                 {
-                    return;
+                    Text = string.IsNullOrWhiteSpace(row[0].Text) ? null : row[0].Text!.Trim();
+                    UpdatedAt = row[0].Updated is { } updated
+                        ? DateTimeOffset.FromUnixTimeSeconds(updated)
+                        : null;
                 }
 
-                var state = JsonSerializer.Deserialize<PersistedMood>(File.ReadAllText(_filePath, Encoding.UTF8));
-                if (state is null)
-                {
-                    return;
-                }
+                _pokeTimes.AddRange(AppDatabase.Query("SELECT at_unix FROM mood_pokes ORDER BY at_unix",
+                    r => AppDatabase.Long(r, "at_unix")));
 
-                Text = string.IsNullOrWhiteSpace(state.Text) ? null : state.Text.Trim();
-                UpdatedAt = state.UpdatedAt is null ? null : DateTimeOffset.FromUnixTimeSeconds(state.UpdatedAt.Value);
-                foreach (var t in state.PokeTimes ?? new List<long>())
-                {
-                    _pokeTimes.Add(t);
-                }
-
+                _loaded = true;
                 Prune(DateTimeOffset.Now);
             }
             catch (Exception ex)
@@ -131,7 +128,7 @@ public sealed class MoodStore
         {
             if (cleaned == Text)
             {
-                return false; // 没变就不写盘，也不刷日志
+                return false; // 没变就不写库，也不刷日志
             }
 
             Text = cleaned;
@@ -176,7 +173,7 @@ public sealed class MoodStore
     }
 
     /// <summary>
-    /// 过期的模型心情当作没写过（顺便落盘清掉）。
+    /// 过期的模型心情当作没写过（顺便写库清掉）。
     /// 为什么在读取时就清：“过期”是个时间事实，不需要定时器；下一次用到它时顺手收掉最省事。
     /// </summary>
     private void ExpireIfStale(DateTimeOffset now)
@@ -215,47 +212,47 @@ public sealed class MoodStore
     private void Prune(DateTimeOffset now)
     {
         var cutoff = now.ToUnixTimeSeconds() - (long)PokeWindow.TotalSeconds;
-        _pokeTimes.RemoveAll(t => t < cutoff);
+        var removed = _pokeTimes.RemoveAll(t => t < cutoff);
         if (_pokeTimes.Count > 50)
         {
             _pokeTimes.RemoveRange(0, _pokeTimes.Count - 50);
+            removed++;
+        }
+
+        if (removed > 0 && _loaded)
+        {
+            try
+            {
+                AppDatabase.Write(conn =>
+                    AppDatabase.Exec(conn, "DELETE FROM mood_pokes WHERE at_unix < $cutoff", ("$cutoff", cutoff)));
+            }
+            catch (Exception ex)
+            {
+                FileLog.Warn("Mood", $"清理过期被戳记录失败：{ex.Message}");
+            }
         }
     }
 
     private void SaveLocked()
     {
-        if (string.IsNullOrEmpty(_filePath))
-        {
-            return;
-        }
-
         try
         {
-            Directory.CreateDirectory(Path.GetDirectoryName(_filePath)!);
-            var json = JsonSerializer.Serialize(new PersistedMood
+            AppDatabase.Write(conn =>
             {
-                Text = Text,
-                UpdatedAt = UpdatedAt?.ToUnixTimeSeconds(),
-                PokeTimes = _pokeTimes.ToList()
-            }, new JsonSerializerOptions
-            {
-                WriteIndented = false,
-                Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
-                DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
-            });
+                AppDatabase.Exec(conn,
+                    "INSERT INTO mood(id, text, updated_unix) VALUES(1, $t, $u) " +
+                    "ON CONFLICT(id) DO UPDATE SET text = excluded.text, updated_unix = excluded.updated_unix",
+                    ("$t", Text), ("$u", UpdatedAt?.ToUnixTimeSeconds()));
 
-            File.WriteAllText(_filePath, json, new UTF8Encoding(false));
+                foreach (var at in _pokeTimes)
+                {
+                    AppDatabase.Exec(conn, "INSERT INTO mood_pokes(at_unix) VALUES($a) ON CONFLICT(at_unix) DO NOTHING", ("$a", at));
+                }
+            });
         }
         catch (Exception ex)
         {
-            FileLog.Warn("Mood", $"心情状态写盘失败：{ex.Message}");
+            FileLog.Warn("Mood", $"心情状态写库失败：{ex.Message}");
         }
-    }
-
-    private sealed class PersistedMood
-    {
-        [JsonPropertyName("text")] public string? Text { get; set; }
-        [JsonPropertyName("updatedAt")] public long? UpdatedAt { get; set; }
-        [JsonPropertyName("pokeTimes")] public List<long>? PokeTimes { get; set; }
     }
 }

@@ -1,8 +1,8 @@
 using System.Security.Cryptography;
-using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
+using QQChatAgent.Services.Data;
 
 namespace QQChatAgent.Services.Stickers;
 
@@ -58,18 +58,19 @@ public sealed class StickerRecord
 /// <summary>
 /// 表情包库：**全局共用一份**（不分会话）—— 用户明确要求“不同会话公用一个表情包存储就可以了”。
 ///
-/// 磁盘布局（数据目录下）：
-///   data/stickers/index.json     索引（每张图的说明、关键词、使用次数）
-///   data/stickers/&lt;hash&gt;.&lt;ext&gt;  图片本体
+/// 存储：
+///   data/qqchat.db 里的 stickers 表   索引（说明、关键词、使用次数、是否表情包）
+///   data/stickers/&lt;hash&gt;.&lt;ext&gt;      图片本体
+/// 为什么图片不放进库：二进制大对象放库里之后，备份/预览/清理都会变麻烦（BLOB 不能直接给面板当图片返回），
+/// 索引进库已经拿到“一句 SQL 查库/去重/统计”的好处了。
 ///
-/// 线程模型：内部锁 + 立即落盘（库很小，几十~几千条，写入不频繁）。
+/// 线程模型：内部锁 + 立即落库（库很小，几十~几千条，写入不频繁）。
 /// 容量：超过 StickerLibraryMax 时按“用得少 + 最久没用”淘汰 —— 见 <see cref="EnforceLimit"/>。
 /// </summary>
 public sealed class StickerStore
 {
     private readonly object _gate = new();
     private readonly List<StickerRecord> _items = new();
-    private string _indexPath = string.Empty;
     private string _dir = string.Empty;
 
     /// <summary>库里现在有多少张。</summary>
@@ -99,21 +100,38 @@ public sealed class StickerStore
     public void Load(string dataRoot)
     {
         _dir = Path.Combine(dataRoot, "stickers");
-        _indexPath = Path.Combine(_dir, "index.json");
         Directory.CreateDirectory(_dir);
 
         lock (_gate)
         {
             _items.Clear();
-            if (!File.Exists(_indexPath))
-            {
-                return;
-            }
-
             try
             {
-                var json = File.ReadAllText(_indexPath, Encoding.UTF8);
-                var loaded = JsonSerializer.Deserialize<List<StickerRecord>>(json) ?? new List<StickerRecord>();
+                // 索引现在在 SQLite 里（老版本是 stickers/index.json，由 LegacyJsonImporter 导入）。
+                // 图片本体仍然放 stickers/ 目录 —— 二进制大对象不适合塞库（备份/预览/清理都不方便）。
+                var loaded = AppDatabase.Query("""
+                    SELECT id, hash, file, ext, bytes, added_unix, last_used_unix, uses, from_uid, from_group,
+                           description, tags, is_sticker, described, describe_attempts
+                    FROM stickers
+                    """, r => new StickerRecord
+                {
+                    Id = AppDatabase.Str(r, "id") ?? string.Empty,
+                    Hash = AppDatabase.Str(r, "hash") ?? string.Empty,
+                    File = AppDatabase.Str(r, "file") ?? string.Empty,
+                    Ext = AppDatabase.Str(r, "ext") ?? "png",
+                    Bytes = AppDatabase.Long(r, "bytes"),
+                    AddedAt = AppDatabase.Long(r, "added_unix"),
+                    LastUsedAt = AppDatabase.Long(r, "last_used_unix"),
+                    Uses = AppDatabase.Int(r, "uses"),
+                    FromUid = AppDatabase.Str(r, "from_uid"),
+                    FromGroup = AppDatabase.Long(r, "from_group"),
+                    Desc = AppDatabase.Str(r, "description"),
+                    Tags = ParseTags(AppDatabase.Str(r, "tags")),
+                    IsSticker = AppDatabase.LongOrNull(r, "is_sticker") is long v ? v != 0 : null,
+                    Described = AppDatabase.Bool(r, "described"),
+                    DescribeAttempts = AppDatabase.Int(r, "describe_attempts")
+                });
+
                 foreach (var item in loaded)
                 {
                     item.AbsolutePath = Path.Combine(_dir, item.File);
@@ -129,6 +147,24 @@ public sealed class StickerStore
             {
                 FileLog.Warn("Sticker", $"表情包索引读取失败：{ex.Message}");
             }
+        }
+    }
+
+    /// <summary>标签列是 JSON 数组（库里存字符串，方便以后用 json_each 查）。</summary>
+    private static List<string> ParseTags(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json))
+        {
+            return new List<string>();
+        }
+
+        try
+        {
+            return JsonSerializer.Deserialize<List<string>>(json) ?? new List<string>();
+        }
+        catch (Exception)
+        {
+            return new List<string>();
         }
     }
 
@@ -462,16 +498,46 @@ public sealed class StickerStore
     {
         try
         {
-            var json = JsonSerializer.Serialize(_items, new JsonSerializerOptions
+            // 库里的索引与内存列表整体对账（几十~几千条，和以前“整份重写 index.json”一样便宜）：
+            // upsert 全部 + 删掉库里多出来的（被删除/被淘汰的那些）。
+            var ids = _items.Select(i => i.Id).ToList();
+            AppDatabase.Write(conn =>
             {
-                WriteIndented = false,
-                Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping
+                foreach (var item in _items)
+                {
+                    AppDatabase.Exec(conn, """
+                        INSERT INTO stickers(id, hash, file, ext, bytes, added_unix, last_used_unix, uses,
+                                             from_uid, from_group, description, tags, is_sticker, described, describe_attempts)
+                        VALUES($id, $h, $f, $ext, $b, $a, $lu, $u, $fu, $fg, $d, $tags, $is, $de, $da)
+                        ON CONFLICT(id) DO UPDATE SET
+                            hash = excluded.hash, file = excluded.file, ext = excluded.ext, bytes = excluded.bytes,
+                            last_used_unix = excluded.last_used_unix, uses = excluded.uses,
+                            from_uid = excluded.from_uid, from_group = excluded.from_group,
+                            description = excluded.description, tags = excluded.tags, is_sticker = excluded.is_sticker,
+                            described = excluded.described, describe_attempts = excluded.describe_attempts
+                        """,
+                        ("$id", item.Id), ("$h", item.Hash), ("$f", item.File), ("$ext", item.Ext),
+                        ("$b", item.Bytes), ("$a", item.AddedAt), ("$lu", item.LastUsedAt), ("$u", item.Uses),
+                        ("$fu", item.FromUid), ("$fg", item.FromGroup), ("$d", item.Desc),
+                        ("$tags", item.Tags is { Count: > 0 } ? JsonSerializer.Serialize(item.Tags) : null),
+                        ("$is", item.IsSticker is null ? null : (item.IsSticker.Value ? 1 : 0)),
+                        ("$de", item.Described ? 1 : 0), ("$da", item.DescribeAttempts));
+                }
+
+                AppDatabase.Exec(conn, "CREATE TEMP TABLE IF NOT EXISTS _keep_sticker(id TEXT PRIMARY KEY)");
+                AppDatabase.Exec(conn, "DELETE FROM _keep_sticker");
+                foreach (var id in ids)
+                {
+                    AppDatabase.Exec(conn, "INSERT OR IGNORE INTO _keep_sticker(id) VALUES($id)", ("$id", id));
+                }
+
+                AppDatabase.Exec(conn, "DELETE FROM stickers WHERE id NOT IN (SELECT id FROM _keep_sticker)");
+                AppDatabase.Exec(conn, "DELETE FROM _keep_sticker");
             });
-            File.WriteAllText(_indexPath, json, new UTF8Encoding(false));
         }
         catch (Exception ex)
         {
-            FileLog.Warn("Sticker", $"表情包索引写盘失败：{ex.Message}");
+            FileLog.Warn("Sticker", $"表情包索引写库失败：{ex.Message}");
         }
     }
 

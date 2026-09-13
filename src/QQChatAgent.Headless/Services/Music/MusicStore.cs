@@ -1,9 +1,9 @@
-using System.Text.Json;
 using System.Text.Json.Serialization;
+using QQChatAgent.Services.Data;
 
 namespace QQChatAgent.Services.Music;
 
-/// <summary>机器人“听过”的一首歌（存盘，用于避免重复下载/分析，也让面板能看到听过什么）。</summary>
+/// <summary>机器人“听过”的一首歌（存库，用于避免重复下载/分析，也让面板能看到听过什么）。</summary>
 public sealed class HeardSong
 {
     /// <summary>唯一键：平台 + 歌曲 id（如 netease:186016）。</summary>
@@ -41,21 +41,20 @@ public sealed class HeardSong
 }
 
 /// <summary>
-/// “听过的歌”台账：data/music/listened.json。
+/// “听过的歌”台账：SQLite 的 <c>heard_songs</c> 表（原来是 data/music/listened.json）。
 /// 存它是为了两件事：① 同一首歌被反复分享时不再重复下载/解码（省流量也省 CPU）；
 /// ② 面板/日志能看清机器人到底听过什么、分析过哪些。
+/// 内存里保留一份列表当读缓存（几十条），写操作直接落库。
 /// </summary>
 public sealed class MusicStore
 {
-    private readonly string _path;
     private readonly Func<int> _maxItems;
     private readonly Action<string> _log;
     private readonly object _gate = new();
     private readonly List<HeardSong> _songs = [];
 
-    public MusicStore(string path, Func<int> maxItems, Action<string> log)
+    public MusicStore(Func<int> maxItems, Action<string> log)
     {
-        _path = path;
         _maxItems = maxItems;
         _log = log;
         Load();
@@ -113,15 +112,17 @@ public sealed class MusicStore
             }
 
             var max = Math.Max(10, _maxItems());
+            var evicted = new List<string>();
             if (_songs.Count > max)
             {
                 foreach (var old in _songs.OrderBy(s => s.LastHeard).Take(_songs.Count - max).ToList())
                 {
                     _songs.Remove(old);
+                    evicted.Add(old.Key);
                 }
             }
 
-            Save();
+            Save(existing, evicted);
             return existing;
         }
     }
@@ -130,14 +131,28 @@ public sealed class MusicStore
     {
         try
         {
-            if (!File.Exists(_path))
+            var loaded = AppDatabase.Query("""
+                SELECT key, platform, song_id, title, artist, album, duration_seconds, features, lyric_excerpt,
+                       first_heard_unix, last_heard_unix, heard_count
+                FROM heard_songs
+                ORDER BY last_heard_unix DESC
+                """, r => new HeardSong
             {
-                return;
-            }
+                Key = AppDatabase.Str(r, "key") ?? string.Empty,
+                Platform = AppDatabase.Str(r, "platform") ?? string.Empty,
+                SongId = AppDatabase.Str(r, "song_id") ?? string.Empty,
+                Title = AppDatabase.Str(r, "title") ?? string.Empty,
+                Artist = AppDatabase.Str(r, "artist") ?? string.Empty,
+                Album = AppDatabase.Str(r, "album") ?? string.Empty,
+                DurationSeconds = AppDatabase.Double(r, "duration_seconds"),
+                Features = AppDatabase.Str(r, "features") ?? string.Empty,
+                LyricExcerpt = AppDatabase.Str(r, "lyric_excerpt") ?? string.Empty,
+                FirstHeard = DateTimeOffset.FromUnixTimeSeconds(AppDatabase.Long(r, "first_heard_unix")),
+                LastHeard = DateTimeOffset.FromUnixTimeSeconds(AppDatabase.Long(r, "last_heard_unix")),
+                HeardCount = AppDatabase.Int(r, "heard_count")
+            });
 
-            var json = File.ReadAllText(_path);
-            var loaded = JsonSerializer.Deserialize<List<HeardSong>>(json);
-            if (loaded is { Count: > 0 })
+            if (loaded.Count > 0)
             {
                 _songs.AddRange(loaded);
                 _log($"[Music] 已加载听过的歌 {loaded.Count} 首");
@@ -145,27 +160,41 @@ public sealed class MusicStore
         }
         catch (Exception ex)
         {
-            _log($"[Music] 读取 {Path.GetFileName(_path)} 失败（按空处理）: {ex.Message}");
+            _log($"[Music] 读取听过的歌失败（按空处理）: {ex.Message}");
         }
     }
 
-    private void Save()
+    private void Save(HeardSong song, IReadOnlyList<string> evictedKeys)
     {
         try
         {
-            var dir = Path.GetDirectoryName(_path);
-            if (!string.IsNullOrEmpty(dir))
+            AppDatabase.Write(conn =>
             {
-                Directory.CreateDirectory(dir);
-            }
+                AppDatabase.Exec(conn, """
+                    INSERT INTO heard_songs(key, platform, song_id, title, artist, album, duration_seconds,
+                                            features, lyric_excerpt, first_heard_unix, last_heard_unix, heard_count)
+                    VALUES($k, $p, $sid, $title, $artist, $album, $dur, $f, $l, $fh, $lh, $c)
+                    ON CONFLICT(key) DO UPDATE SET
+                        title = excluded.title, artist = excluded.artist, album = excluded.album,
+                        duration_seconds = excluded.duration_seconds, features = excluded.features,
+                        lyric_excerpt = excluded.lyric_excerpt, last_heard_unix = excluded.last_heard_unix,
+                        heard_count = excluded.heard_count
+                    """,
+                    ("$k", song.Key), ("$p", song.Platform), ("$sid", song.SongId), ("$title", song.Title),
+                    ("$artist", song.Artist), ("$album", song.Album), ("$dur", song.DurationSeconds),
+                    ("$f", song.Features), ("$l", song.LyricExcerpt),
+                    ("$fh", song.FirstHeard.ToUnixTimeSeconds()), ("$lh", song.LastHeard.ToUnixTimeSeconds()),
+                    ("$c", song.HeardCount));
 
-            var tmp = _path + ".tmp";
-            File.WriteAllText(tmp, JsonSerializer.Serialize(_songs, new JsonSerializerOptions { WriteIndented = true }));
-            File.Move(tmp, _path, overwrite: true);
+                foreach (var key in evictedKeys)
+                {
+                    AppDatabase.Exec(conn, "DELETE FROM heard_songs WHERE key = $k", ("$k", key));
+                }
+            });
         }
         catch (Exception ex)
         {
-            _log($"[Music] 保存 {Path.GetFileName(_path)} 失败: {ex.Message}");
+            _log($"[Music] 保存听过的歌失败: {ex.Message}");
         }
     }
 }

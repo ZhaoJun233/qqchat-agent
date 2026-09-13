@@ -20,6 +20,7 @@ namespace QQChatAgent.IntegrationHarness;
 ///   S24 语音消息（模型 speak → record 段只给 URL → 面板试听/健康检查）
 ///   S25 撤回消息（[已撤回] 标记 / 不给模型看原文 / 可评论带冷却）
 ///   S26 联网搜索（模型自带搜索 grounding / 搜索源兜底 / read 读页面 / SSRF 闸门）
+///   S27 老 JSON → SQLite 迁移（不丢数据 / 旧文件留档 / 幂等 / 真的生效）
 /// 每个场景用独立进程与独立数据目录，互不干扰。
 /// </summary>
 public static partial class Program
@@ -96,6 +97,7 @@ public static partial class Program
         await Scenario("s24", RunVoiceScenarioAsync);
         await Scenario("s25", RunRecallScenarioAsync);
         await Scenario("s26", RunSearchScenarioAsync);
+        await Scenario("s27", RunMigrationScenarioAsync);
         }
         catch (Exception ex)
         {
@@ -254,19 +256,18 @@ public static partial class Program
         Check("白名单外的群不请求模型", openAi.Requests.Count == 0, $"实际请求 {openAi.Requests.Count} 次");
         Check("白名单外的群不发送消息", !protocol.ActionsReceived.Any(a => a["action"]?.GetValue<string>() == "send_group_msg"));
 
-        var conversationsJson = Path.Combine(dataDir, "data", "conversations.json");
-        var stored = File.Exists(conversationsJson) ? await File.ReadAllTextAsync(conversationsJson) : "[]";
-        Check("白名单外的群没有落盘会话", !stored.Contains("88888"), Truncate(stored, 200));
+        var storedConversations = DbProbe.Dump(dataDir, "SELECT source_key FROM conversations");
+        Check("白名单外的群没有落库会话", !storedConversations.Contains("88888"), Truncate(storedConversations, 200));
 
         // 名单内的群 → 必须被处理
         await protocol.SendGroupMessageAsync(99999, 20002, "老王", "@机器人 你好", 7102, mentionBot: true, ct: cts.Token);
         var send = await protocol.WaitForActionAsync("send_group_msg", TimeSpan.FromSeconds(20));
         Check("白名单内的群正常回复", send is not null);
-        // 落盘是异步防抖的：直接读文件会偶发读到旧内容（S3 曾因此偶发红）。
+        // 落库是异步防抖的：立即查库会偶发读到旧内容（S3 曾因此偶发红）。
         var persisted = await WaitUntilAsync(
-            () => File.Exists(conversationsJson) && File.ReadAllText(conversationsJson).Contains("99999"),
+            () => DbProbe.Dump(dataDir, "SELECT source_key FROM conversations").Contains("99999"),
             TimeSpan.FromSeconds(5));
-        Check("白名单内的会话已落盘", persisted, "5 秒内没等到会话写盘");
+        Check("白名单内的会话已落库", persisted, "5 秒内没等到会话写库");
 
         await bot.StopAsync();
     }
@@ -430,21 +431,18 @@ public static partial class Program
 
             await Task.Delay(1500); // 等落盘
 
-            // 校验人物档案文件
-            var profileFile = Path.Combine(dataDir, "data", "member_profiles", "30003.json");
-            Check("为发送者建立了人物档案文件", File.Exists(profileFile));
-            if (File.Exists(profileFile))
-            {
-                var profileJson = await File.ReadAllTextAsync(profileFile);
-                Check("档案文件是人可读的（不转义中文）", profileJson.Contains("小美") && profileJson.Contains("机器人帮我看个问题"), Truncate(profileJson, 300));
-                Check("档案记录了发送者昵称与发言条数", profileJson.Contains("\"Name\"") && profileJson.Contains("\"Messages\""), Truncate(profileJson, 300));
-            }
+            // 校验人物档案（现在存在 SQLite 里）
+            var profileText = DbProbe.Text(dataDir, "SELECT text FROM member_messages WHERE uid = '30003' LIMIT 1");
+            Check("为发送者建立了人物档案", profileText is not null, profileText ?? "(库里没有 30003 的发言)");
+            var profileDump = DbProbe.Dump(dataDir,
+                "SELECT m.name, mm.text FROM members m LEFT JOIN member_messages mm ON mm.uid = m.uid WHERE m.uid = '30003'");
+            Check("档案内容可读（中文正常）", profileDump.Contains("小美") && profileDump.Contains("机器人帮我看个问题"), Truncate(profileDump, 300));
+            Check("档案记下了昵称与发言", profileDump.Contains("小美") && profileDump.Contains("|"), Truncate(profileDump, 300));
 
-            var conversationsJson = Path.Combine(dataDir, "data", "conversations.json");
-            Check("会话已落盘", File.Exists(conversationsJson));
-            var storedJson = File.Exists(conversationsJson) ? await File.ReadAllTextAsync(conversationsJson) : "[]";
-            Check("落盘内容含私聊会话与发送者 QQ", storedJson.Contains("private:30003") && storedJson.Contains("30003"), Truncate(storedJson, 300));
-            Check("落盘保留了 SenderId（重启后可继续建档案）", storedJson.Contains("SenderId"), Truncate(storedJson, 400));
+            Check("会话已落库", DbProbe.Count(dataDir, "SELECT COUNT(1) FROM conversations WHERE source_key = 'private:30003'") == 1);
+            var storedRow = DbProbe.Dump(dataDir, "SELECT source_key, sender_id FROM messages WHERE source_key = 'private:30003'");
+            Check("落库内容含私聊会话与发送者 QQ", storedRow.Contains("private:30003") && storedRow.Contains("30003"), Truncate(storedRow, 300));
+            Check("落库保留了 SenderId（重启后可继续建档案）", storedRow.Contains("30003"), Truncate(storedRow, 400));
         }
         finally
         {
@@ -683,8 +681,8 @@ public static partial class Program
             var sysB = SystemText(lastB);
             var sysA = SystemText(lastA);
 
-            Check("B 群提示词里带了档案段（本群更早的发言）", sysB.Contains("本群更早的发言"), Truncate(sysB, 600));
-            Check("B 群档案含本群更早的消息", sysB.Contains("B群机密暗号"), Truncate(sysB, 600));
+            Check("B 群提示词里带了档案段（本群更早的发言）", sysB.Contains("本群更早的发言"),
+                "参与者/档案段：" + ParticipantsSection(lastB));            Check("B 群档案含本群更早的消息", sysB.Contains("B群机密暗号"), Truncate(sysB, 600));
             Check("★ B 群提示词绝不包含 A 群的发言", !sysB.Contains("A群机密暗号"), "泄露了：" + Truncate(sysB, 600));
 
             Check("A 群提示词里带了档案段", sysA.Contains("本群更早的发言"), Truncate(sysA, 600));
@@ -758,12 +756,9 @@ public static partial class Program
         // 等画像巡检落地（间隔 5 秒）
         await Task.Delay(14000);
 
-        var profileFile = Path.Combine(dataDir, "data", "member_profiles", "20002.json");
-        Check("档案文件已生成", File.Exists(profileFile));
-
-        var profileJson = File.Exists(profileFile) ? await File.ReadAllTextAsync(profileFile) : "";
-        Check("档案里写入了 Summaries（画像）", profileJson.Contains("Summaries"), Truncate(profileJson, 400));
-        Check("画像记下了折叠到的序号 ThroughSeq", profileJson.Contains("ThroughSeq"), Truncate(profileJson, 400));
+        var profileDump2 = DbProbe.Dump(dataDir, "SELECT scope, text, through_seq FROM member_summaries WHERE uid = '20002'");
+        Check("库里已写入画像（Summaries）", profileDump2.Length > 0, Truncate(profileDump2, 400));
+        Check("画像记下了折叠到的序号 ThroughSeq", DbProbe.Count(dataDir, "SELECT COUNT(1) FROM member_summaries WHERE uid = '20002' AND through_seq <> 0") > 0, Truncate(profileDump2, 400));
 
         // 再来一条新消息 → 请求里应带上“画像”字样，且不再重复成堆的已折叠原文
         openAi.EnqueueReply("""{"suitability": 99, "reply": "收到"}""");
@@ -936,7 +931,6 @@ public static partial class Program
         const int botWsPort = 13020;
         const long groupId = 66662;
         var dataDir = NewDataDir("s11");
-        var profileFile = Path.Combine(dataDir, "data", "member_profiles", "20002.json");
 
         var env = new Dictionary<string, string>
         {
@@ -981,12 +975,12 @@ public static partial class Program
                 await protocol.SendGroupMessageAsync(groupId, 20002, "老王", $"重启前第{i}句", 9200 + i, mentionBot: true, ct: cts.Token);
             }
 
-            await Task.Delay(9000); // 等画像巡检跑几轮
+            await Task.Delay(9000);
             await bot.StopAsync();
             await Task.Delay(1200);  // 等落盘
         }
 
-        var throughSeqBefore = ReadThroughSeq(profileFile);
+        var throughSeqBefore = ReadThroughSeq(dataDir, "20002");
         Check("重启前已生成画像（ThroughSeq > 0）", throughSeqBefore > 0, $"ThroughSeq={throughSeqBefore}");
 
         // ---- 重启：同一数据目录 ----
@@ -1014,9 +1008,12 @@ public static partial class Program
 
             await Task.Delay(9000);
 
-            var throughSeqAfter = ReadThroughSeq(profileFile);
+            var throughSeqAfter = ReadThroughSeq(dataDir, "20002");
             Check("★ 重启后画像继续推进（记忆不冻结，C2 回归）",
-                throughSeqAfter > throughSeqBefore, $"重启前 {throughSeqBefore} → 重启后 {throughSeqAfter}");
+                throughSeqAfter > throughSeqBefore,
+                $"重启前 {throughSeqBefore} → 重启后 {throughSeqAfter}；" +
+                $"库中档案发言={DbProbe.TableCount(dataDir, "member_messages")}、消息={DbProbe.TableCount(dataDir, "messages")}；" +
+                $"bot2 日志：{string.Join(" | ", bot2.OutputLines.Where(l => l.Contains("Store") || l.Contains("失败")).TakeLast(3))}");
 
             var prompt = openAi2.Requests.LastOrDefault();
             if (prompt is null)
@@ -1032,25 +1029,9 @@ public static partial class Program
         }
     }
 
-    /// <summary>读档案文件里第一个画像的 ThroughSeq（没有则返回 0）。</summary>
-    private static long ReadThroughSeq(string profileFile)
-    {
-        if (!File.Exists(profileFile))
-        {
-            return 0;
-        }
-
-        try
-        {
-            var root = JsonNode.Parse(File.ReadAllText(profileFile)) as JsonObject;
-            var first = (root?["Summaries"] as JsonArray)?.FirstOrDefault() as JsonObject;
-            return first?["ThroughSeq"]?.GetValue<long>() ?? 0;
-        }
-        catch
-        {
-            return 0;
-        }
-    }
+    /// <summary>读某人画像折叠到的最大序号（库里查；没有则返回 0）。</summary>
+    private static long ReadThroughSeq(string dataDir, string uid)
+        => DbProbe.Count(dataDir, "SELECT COALESCE(MAX(through_seq), 0) FROM member_summaries WHERE uid = $uid", ("$uid", uid));
 
     // ═══════════════════ S12：历史补录真的进得了模型 ═══════════════════
 
@@ -1338,7 +1319,6 @@ public static partial class Program
         const int panelPort = 18087;
         const long groupId = 66666;
         var dataDir = NewDataDir("s15");
-        var profileFile = Path.Combine(dataDir, "data", "member_profiles", "20002.json");
 
         using var openAi = new MockOpenAi(openAiPort);
         openAi.Start();
@@ -1380,7 +1360,7 @@ public static partial class Program
         }
 
         await Task.Delay(5000);
-        Check("初始关闭画像时不生成画像", ReadThroughSeq(profileFile) == 0, $"ThroughSeq={ReadThroughSeq(profileFile)}");
+        Check("初始关闭画像时不生成画像", ReadThroughSeq(dataDir, "20002") == 0, $"ThroughSeq={ReadThroughSeq(dataDir, "20002")}");
 
         var (s0, m0) = await HttpGetAsync($"http://127.0.0.1:{panelPort}/api/conversations/group:{groupId}/messages?limit=999");
         var countBefore = s0 == 200 ? System.Text.RegularExpressions.Regex.Matches(m0, "\\\"role\\\":").Count : -1;
@@ -1411,7 +1391,7 @@ public static partial class Program
 
         await Task.Delay(14000); // 定时器首次 3 秒、之后每 3 秒
 
-        var through = ReadThroughSeq(profileFile);
+        var through = ReadThroughSeq(dataDir, "20002");
         Check("★ 运行中开启的画像巡检真的跑起来了（定时器重建，回归）",
             through > 0, $"ThroughSeq={through}（修复前永远是 0，要重启才行）");
 

@@ -44,6 +44,26 @@ public sealed class BotConversation
 
     private long _nextSeq;
 
+    /// <summary>下一个待分配的会话内序号（持久化用；赋值只增不减）。</summary>
+    public long NextSeq
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return _nextSeq;
+            }
+        }
+
+        set
+        {
+            lock (_gate)
+            {
+                _nextSeq = Math.Max(_nextSeq, value);
+            }
+        }
+    }
+
     /// <summary>最新一条消息的预览文本（供会话列表）。</summary>
     public string Preview
     {
@@ -259,7 +279,8 @@ public sealed class BotConversation
                     Seq = m.Seq
                 }).ToList(),
                 LastTimeUnix = LastTime.ToUnixTimeSeconds(),
-                UnreadCount = 0
+                UnreadCount = 0,
+                NextSeq = _nextSeq
             };
         }
     }
@@ -309,6 +330,11 @@ public sealed class BotConversation
         }
 
         conversation.AppendRange(restored);
+
+        // 序号计数器必须“只进不退”：即使消息一条都没恢复（例如上次写库被截断），
+        // 也要接着上次的号往下发 —— 否则新消息的序号会小于画像已折叠的边界（记忆冻结），
+        // 还会与 (source_key, seq) 主键里的老消息撞号。
+        conversation.NextSeq = record.NextSeq;
         return conversation;
     }
 

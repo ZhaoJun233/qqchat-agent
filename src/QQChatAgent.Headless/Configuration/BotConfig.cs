@@ -23,19 +23,22 @@ public static class BotConfig
     /// <summary>被面板设置覆盖掉的环境变量（启动时提示用户，否则“改了 .env 怎么不生效”很难排查）。</summary>
     public static List<string> PanelOverriddenEnvVars { get; } = new();
 
-    /// <summary>加载配置：settings.json → 环境变量 → 必要的合规修正。</summary>
+    /// <summary>加载配置：配置文件 → 环境变量 → 必要的合规修正。</summary>
     public static AppSettings Load()
     {
-        var fileExists = File.Exists(SettingsStore.FilePath);
+        // “首次部署”的判据：**配置里还没有被存过**（以前是“settings.json 文件不存在”）。
+        // ⚠ 这里不能再看文件是否存在 —— 数据搬到 SQLite 之后，库文件是启动时刚建的、永远存在，
+        // 用它当判据会让“首次部署用环境变量当种子”永远不生效（踩过：白名单直接变空，机器人谁都不理）。
+        var hasStored = SettingsStore.HasStoredSettings();
         var settings = SettingsStore.Load();
         ApplyInfrastructureEnvironment(settings);
-        ApplyBehaviorEnvironment(settings, seedOnly: !fileExists);
+        ApplyBehaviorEnvironment(settings, seedOnly: !hasStored);
         ApplyPanelOverrides(settings); // 面板改过的模型配置：优先于环境变量
         Normalize(settings);
 
-        if (fileExists)
+        if (hasStored)
         {
-            SettingsStore.Save(settings); // 把环境变量带来的基础设施值写回，保持文件与实态一致
+            SettingsStore.Save(settings); // 把环境变量带来的基础设施值写回，保持库与实态一致
         }
 
         return settings;

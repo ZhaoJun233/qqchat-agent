@@ -1007,8 +1007,12 @@ public sealed class WebUiServer : IDisposable
 
     // ══════════════ 基础 IO ══════════════
 
-    /// <summary>读取某会话的归档文件尾部（已溢出滚动窗口的旧消息，JSONL）。</summary>
-    private static JsonObject ReadArchive(string sourceKey, int limit)
+    /// <summary>
+    /// 读取某会话的归档（已溢出滚动窗口的旧消息）。
+    /// 现在归档在 SQLite 里（messages 表 archived=1），不再是 archive/*.jsonl 文件；
+    /// 返回给面板的字段保持与老版一致（t/role/sender/uid/mid/text），前端不用改。
+    /// </summary>
+    private JsonObject ReadArchive(string sourceKey, int limit)
     {
         var result = new JsonObject
         {
@@ -1023,47 +1027,29 @@ public sealed class WebUiServer : IDisposable
             return result;
         }
 
-        var safe = string.Concat(sourceKey.Select(c => char.IsLetterOrDigit(c) ? c : '_'));
-        var path = Path.Combine(AppPaths.DataDir, "archive", safe + ".jsonl");
-        if (!File.Exists(path))
-        {
-            result["error"] = "该会话尚无归档";
-            result["path"] = path;
-            return result;
-        }
-
         try
         {
-            // 单遍扫描 + 环形缓冲：O(文件) 时间、O(limit) 内存，适合人工翻旧账
-            var ring = new Queue<JsonObject>(limit);
-            var total = 0;
-            foreach (var line in File.ReadLines(path))
+            var rows = _agent.ReadArchive(sourceKey, limit);
+            var array = new JsonArray();
+            foreach (var m in rows)
             {
-                if (string.IsNullOrWhiteSpace(line))
+                array.Add(new JsonObject
                 {
-                    continue;
-                }
-
-                total++;
-                try
-                {
-                    if (JsonNode.Parse(line) is JsonObject obj)
-                    {
-                        ring.Enqueue(obj);
-                        if (ring.Count > limit)
-                        {
-                            ring.Dequeue();
-                        }
-                    }
-                }
-                catch
-                {
-                    // 跳过损坏行
-                }
+                    ["t"] = m.TimeUnix,
+                    ["role"] = m.Role,
+                    ["sender"] = m.SenderName,
+                    ["uid"] = m.SenderId,
+                    ["mid"] = m.QqMessageId,
+                    ["text"] = m.Text
+                });
             }
 
-            result["messages"] = new JsonArray(ring.Select(o => (JsonNode)o).ToArray());
-            result["totalLines"] = total;
+            result["messages"] = array;
+            result["totalLines"] = rows.Count;
+            if (rows.Count == 0)
+            {
+                result["error"] = "该会话尚无归档";
+            }
         }
         catch (Exception ex)
         {

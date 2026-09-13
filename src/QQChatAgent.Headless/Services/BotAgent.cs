@@ -277,7 +277,7 @@ public sealed class BotAgent : IDisposable
     private void BuildMusicService()
     {
         var dataDir = Path.Combine(AppPaths.DataDir, "music");
-        var store = new MusicStore(Path.Combine(dataDir, "listened.json"), () => _settings.MusicLibraryMax, EmitLog);
+        var store = new MusicStore(() => _settings.MusicLibraryMax, EmitLog);
         var netease = new NeteaseMusicClient(_musicHttp, () => _settings.NeteaseCookie, () => _settings.NeteaseBaseUrl, EmitLog);
         var audio = new MusicAudioResolver(
             _musicHttp,
@@ -721,6 +721,8 @@ public sealed class BotAgent : IDisposable
         _replyCooldown.TryRemove(sourceKey, out _);
         _historyRequested.TryRemove(sourceKey, out _);
         DropPending(sourceKey); // 清待回复队列：否则在途回复还会发到 QQ，本地记录却已成孤儿
+        // 库里的会话与消息要**显式删**：平时的保存只 upsert，不删任何东西
+        _store.DeleteConversation(sourceKey);
         Save();
         EmitLog($"已删除会话 {conversation.Name}");
         ConversationsChanged?.Invoke();
@@ -1576,7 +1578,7 @@ public sealed class BotAgent : IDisposable
     {
         try
         {
-            var records = _store.LoadAsync().GetAwaiter().GetResult();
+            var records = _store.LoadAll();
             if (records.Count == 0)
             {
                 return;
@@ -2793,35 +2795,21 @@ public sealed class BotAgent : IDisposable
     /// <summary>把超出滚动窗口的旧消息追加到归档文件（JSONL），不丢历史但也不占内存。</summary>
     private void ArchiveEvicted(string sourceKey, IReadOnlyList<ChatMessage> evicted)
     {
+        // 归档进库（messages 表 archived=1），不再另开 .jsonl 文件：
+        // 面板翻旧账、按时间/关键词查、以后做自动清理都是一句 SQL。
         try
         {
-            var dir = Path.Combine(AppPaths.DataDir, "archive");
-            Directory.CreateDirectory(dir);
-
-            var safe = string.Concat(sourceKey.Select(c => char.IsLetterOrDigit(c) ? c : '_'));
-            var path = Path.Combine(dir, safe + ".jsonl");
-
-            var sb = new System.Text.StringBuilder();
-            foreach (var m in evicted)
-            {
-                sb.Append(System.Text.Json.JsonSerializer.Serialize(new
-                {
-                    t = m.Timestamp.ToUnixTimeSeconds(),
-                    role = m.Role.ToString(),
-                    sender = m.SenderName,
-                    uid = m.SenderId,
-                    mid = m.QqMessageId,
-                    text = m.Text
-                })).Append('\n');
-            }
-
-            File.AppendAllText(path, sb.ToString(), Encoding.UTF8);
+            _store.AppendArchive(sourceKey, evicted);
         }
         catch (Exception ex)
         {
             FileLog.Write("Archive", "归档失败: " + ex.Message);
         }
     }
+
+    /// <summary>面板用：读某会话的归档（已溢出滚动窗口的旧消息，最新在前）。</summary>
+    public List<ArchivedMessage> ReadArchive(string sourceKey, int limit)
+        => _store.ReadArchive(sourceKey, limit);
 
     /// <summary>丢掉某会话的待回复项（删会话/改白名单时用）。在途那次不中斷，但不再补发后续。</summary>
     private void DropPending(string sourceKey)

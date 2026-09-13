@@ -23,9 +23,9 @@ public static partial class Program
         const int imagePort = 18094;
         const long groupId = 66681;
         var dataDir = NewDataDir("s18");
-        // 表情包库住在数据根目录下的 stickers/（与 data/*.json 并列：二进制与 JSON 分开放）
+        // 表情包库：索引在 SQLite（stickers 表），图片本体住在数据根目录下的 stickers/
         var stickerDir = Path.Combine(dataDir, "stickers");
-        var indexPath = Path.Combine(stickerDir, "index.json");
+
 
         using var images = new MockImageHost(imagePort);
         images.Start();
@@ -79,17 +79,17 @@ public static partial class Program
 
         var id1 = MockImageHost.StickerId(1);
         var collected = await WaitUntilAsync(
-            () => File.Exists(indexPath) && File.ReadAllText(indexPath).Contains(id1),
+            () => ReadIndex(dataDir).Contains(id1),
             TimeSpan.FromSeconds(25));
-        Check("★ 群友发的图被自动收进表情包库", collected, $"期望 id={id1}，索引：{Truncate(ReadIndex(indexPath), 300)}");
+        Check("★ 群友发的图被自动收进表情包库", collected, $"期望 id={id1}，索引：{Truncate(ReadIndex(dataDir), 300)}");
         Check("同一张图只存一份（按内容哈希去重）", Directory.Exists(stickerDir) && Directory.GetFiles(stickerDir, $"{id1}-*").Length == 1,
             string.Join(",", Directory.Exists(stickerDir) ? Directory.GetFiles(stickerDir, $"{id1}-*").Select(Path.GetFileName) : Array.Empty<string>()));
 
         // ---- 2) 自动识别（说明 + 关键词）----
         var described = await WaitUntilAsync(
-            () => ReadIndex(indexPath).Contains("\"憋笑失败的猫\""),
+            () => ReadIndex(dataDir).Contains("憋笑失败的猫"),
             TimeSpan.FromSeconds(30));
-        Check("★ 机器人用模型给新图生成说明与关键词（没有它就没法按语境检索）", described, Truncate(ReadIndex(indexPath), 300));
+        Check("★ 机器人用模型给新图生成说明与关键词（没有它就没法按语境检索）", described, Truncate(ReadIndex(dataDir), 300));
         Check("确实发起了编目请求（带图片的多模态请求）", openAi.StickerDescribeRequests > 0, $"次数 {openAi.StickerDescribeRequests}");
 
         // ---- 3) 按语境挑候选给模型 ----
@@ -121,7 +121,7 @@ public static partial class Program
         Check("文字与表情包都能发出来（这条是“文字 + 图”）",
             protocol.ActionsReceived.Any(a => a["action"]?.GetValue<string>() == "send_group_msg" && MessageText(a).Contains("哈哈")),
             string.Join(" | ", protocol.ActionsReceived.Where(a => a["action"]?.GetValue<string>() == "send_group_msg").Select(MessageText)));
-        Check("用过一次会记账（下次淘汰时更安全）", ReadIndex(indexPath).Contains("\"Uses\":1"), Truncate(ReadIndex(indexPath), 300));
+        Check("用过一次会记账（下次淘汰时更安全）", DbProbe.Count(dataDir, "SELECT COUNT(1) FROM stickers WHERE id = $id AND uses = 1", ("$id", id1)) == 1, Truncate(ReadIndex(dataDir), 300));
 
         // ---- 6) 审核闸门：模型说“这不是表情包”→ 立即丢掉（线上把聊天截图当表情包收了）----
         // 先把现有图全部识别完，否则下面那条“审核失败”的脚本会被别的图吃掉。
@@ -129,12 +129,12 @@ public static partial class Program
             () =>
             {
                 var (status, body) = HttpGetAsync($"http://127.0.0.1:{panelPort}/api/stickers").GetAwaiter().GetResult();
-                return status == 200 && body.Contains("\"pendingDescribe\":0") && body.Contains("\"described\":" + CountStickers(indexPath));
+                return status == 200 && body.Contains("\"pendingDescribe\":0") && body.Contains("\"described\":" + CountStickers(dataDir));
             },
             TimeSpan.FromSeconds(40));
 
         openAi.EnqueueStickerVerdict("""{"sticker": false, "desc": "聊天截图，文字写着确认是旧版本", "tags": ["截图", "聊天记录"]}""");
-        var beforeAudit = CountStickers(indexPath);
+        var beforeAudit = CountStickers(dataDir);
         await protocol.SendGroupMessageAsync(groupId, 30007, "小明", "看这个截图", 9301, mentionBot: true,
             imageUrl: images.Url(9), ct: cts.Token);
         var auditId = MockImageHost.StickerId(9);
@@ -147,8 +147,8 @@ public static partial class Program
         Check("★ 审核不通过的图会被机器人主动丢弃（日志里说清了原因）", rejected,
             $"截图 id={auditId}；最近的表情包日志：{Truncate(string.Join(" ｜ ", bot.OutputLines.Where(l => l.Contains("表情包")).TakeLast(4)), 320)}");
         Check("审核不通过的图不会留在库里",
-            !ReadIndex(indexPath).Contains(auditId),
-            $"之前 {beforeAudit} 张，现在 {CountStickers(indexPath)} 张：{Truncate(ReadIndex(indexPath), 240)}");
+            !ReadIndex(dataDir).Contains(auditId),
+            $"之前 {beforeAudit} 张，现在 {CountStickers(dataDir)} 张：{Truncate(ReadIndex(dataDir), 240)}");
 
         // ---- 5) 存储上限：收 5 张，上限 3 ----
         for (var n = 2; n <= 5; n++)
@@ -161,19 +161,19 @@ public static partial class Program
         }
 
         var trimmed = await WaitUntilAsync(
-            () => CountStickers(indexPath) == 3,
+            () => CountStickers(dataDir) == 3,
             TimeSpan.FromSeconds(30));
         Check("★ 存储上限可配置：收 5 张后库里只剩 3 张（QQCHAT_STICKER_MAX=3）", trimmed,
-            $"当前 {CountStickers(indexPath)} 张：{ReadIndex(indexPath)}");
+            $"当前 {CountStickers(dataDir)} 张：{ReadIndex(dataDir)}");
         Check("★ 淘汰的是“用得少 + 最久没用”的（刚用过那张被留下）",
-            ReadIndex(indexPath).Contains(id1), Truncate(ReadIndex(indexPath), 400));
+            ReadIndex(dataDir).Contains(id1), Truncate(ReadIndex(dataDir), 400));
         Check("淘汰后磁盘上的图片文件也删了（不留垃圾）",
             Directory.GetFiles(stickerDir, "*.png").Length == 3,
             string.Join(",", Directory.GetFiles(stickerDir).Select(Path.GetFileName)));
 
         // ---- 6) 机器人自己巡检：决定删一张 ----
-        var victim = StickerIds(indexPath).FirstOrDefault(id => id != id1);
-        Check("库里还有可被巡检删掉的图", victim is not null, Truncate(ReadIndex(indexPath), 300));
+        var victim = StickerIds(dataDir).FirstOrDefault(id => id != id1);
+        Check("库里还有可被巡检删掉的图", victim is not null, Truncate(ReadIndex(dataDir), 300));
         openAi.EnqueueCuration($$"""{"delete": ["{{victim}}"], "reason": "说明模糊且从没用过"}""");
 
         using (var http = new HttpClient { Timeout = TimeSpan.FromSeconds(10) })
@@ -183,14 +183,14 @@ public static partial class Program
         }
 
         var deleted = await WaitUntilAsync(
-            () => !ReadIndex(indexPath).Contains(victim!),
+            () => !ReadIndex(dataDir).Contains(victim!),
             TimeSpan.FromSeconds(30));
         Check("★ 机器人自巡检真的删掉了模型点名的图", deleted,
-            $"victim={victim}；{Truncate(ReadIndex(indexPath), 300)}");
-        Check("它不会删刚用过的那张（代码侧兜底，不听模型的）", ReadIndex(indexPath).Contains(id1),
-            Truncate(ReadIndex(indexPath), 300));
+            $"victim={victim}；{Truncate(ReadIndex(dataDir), 300)}");
+        Check("它不会删刚用过的那张（代码侧兜底，不听模型的）", ReadIndex(dataDir).Contains(id1),
+            Truncate(ReadIndex(dataDir), 300));
         Check("巡检请求确实发生过", openAi.StickerCurateRequests > 0, $"次数 {openAi.StickerCurateRequests}");
-        Check("巡检结束后张数仍然 ≤ 上限", CountStickers(indexPath) <= 3, $"当前 {CountStickers(indexPath)}");
+        Check("巡检结束后张数仍然 ≤ 上限", CountStickers(dataDir) <= 3, $"当前 {CountStickers(dataDir)}");
 
         // ---- 7) 频率门：库里就几张时不能每句都挂同一张（群友直接开愤）----
         openAi.EnqueueReply($$"""{"suitability": 99, "reply": "又一句", "sticker": "{{id1}}"}""");
@@ -226,11 +226,12 @@ public static partial class Program
         => string.IsNullOrEmpty(text) ? string.Empty
             : text.Length <= max ? text : "…" + text[^max..];
 
-    private static string ReadIndex(string path)
+    /// <summary>把库里的表情包索引拼成一段可读文本（断言用 Contains）。</summary>
+    private static string ReadIndex(string dataDir)
     {
         try
         {
-            return File.Exists(path) ? File.ReadAllText(path, Encoding.UTF8) : "(没有索引文件)";
+            return DbProbe.Dump(dataDir, "SELECT id, description, uses, described FROM stickers ORDER BY added_unix");
         }
         catch (Exception ex)
         {
@@ -238,39 +239,15 @@ public static partial class Program
         }
     }
 
-    private static int CountStickers(string indexPath)
-    {
-        var json = ReadIndex(indexPath);
-        if (json.StartsWith('('))
-        {
-            return 0;
-        }
+    private static int CountStickers(string dataDir)
+        => (int)DbProbe.TableCount(dataDir, "stickers");
 
-        try
-        {
-            return JsonNode.Parse(json)?.AsArray().Count ?? 0;
-        }
-        catch
-        {
-            return -1;
-        }
-    }
-
-    private static List<string> StickerIds(string indexPath)
-    {
-        try
-        {
-            var array = JsonNode.Parse(ReadIndex(indexPath))?.AsArray();
-            return array?.Select(n => n?["Id"]?.GetValue<string>() ?? string.Empty)
-                        .Where(s => s.Length > 0)
-                        .ToList()
-                ?? new List<string>();
-        }
-        catch
-        {
-            return new List<string>();
-        }
-    }
+    private static List<string> StickerIds(string dataDir)
+        => DbProbe.Dump(dataDir, "SELECT id FROM stickers ORDER BY added_unix")
+            .Split('\n', StringSplitOptions.RemoveEmptyEntries)
+            .Select(s => s.Trim())
+            .Where(s => s.Length > 0)
+            .ToList();
 
     /// <summary>取一条动作里所有 image 段的 file/base64 值。</summary>
     private static IEnumerable<string> ImageSegments(JsonObject? action)

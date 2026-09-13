@@ -32,6 +32,7 @@
       · 直接输出 SVG：矢量图在手机上看更锐利，体积也只有 PNG 的几十分之一。
   -->
   <ItemGroup>
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="8.0.10" />
     <PackageReference Include="Net.Codecrete.QrCodeGenerator" Version="3.2.1" />
     <PackageReference Include="NLayer" Version="1.16.0" />
   </ItemGroup>

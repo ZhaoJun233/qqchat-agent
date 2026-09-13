@@ -42,6 +42,10 @@ docker compose logs -f napcat       # 首次扫码登录（或在机器人面板
 - **Web 面板**：聊天记录与会话管理、设置、实时日志、手机端适配；**面板内扫码登录**（账号未登录时直接显示二维码，不必再找 NapCat 自己的入口）
 - **模型接口面板可改**：Base URL / 模型名 / API Key 在设置页改完立即生效，不用改 `.env` 重启；密钥单独存 `data/secrets.json`（权限 600），不进 `settings.json`，界面只回显掩码
 - **可观测**：`/healthz` `/readyz` `/status` + 容器 `HEALTHCHECK`；QQ 掉线会主动提示（仅凭 WebSocket 连着判断不了登录失效）
+- **数据存 SQLite**：会话/消息/人物档案/画像/心情/听过的歌/表情包索引/密钥全部在一个 `data/qqchat.db` 里（WAL）。
+  好处：一次崩溃不会“会话写了、档案没写”（同库同事务）；消息是追加型数据，不再每次全量重写 JSON；
+  面板要的“某群更早的发言 / 某人某群的画像 / 归档里翻旧账”都是一句 SQL。
+  老版本的 JSON 会在首次启动时**自动导入**并移到 `legacy-json/` 留档（不删）
 - **配置分层**：环境变量负责部署（协议端地址、token、挂载目录），`settings.json` 负责行为（人设、白名单、冷却、阈值…），面板是行为的唯一所有者
 
 ## 🏗️ 架构
@@ -65,7 +69,7 @@ NapCat 容器 ── OneBot v11 正向 WS ──┐
 | --- | --- |
 | QQ 通道 | [NapCat](https://github.com/NapNeko/NapCatQQ) → OneBot v11（正向/反向 WebSocket、HTTP 三种可选） |
 | AI 大脑 | OpenAI 兼容 Chat Completions（含多模态识图） |
-| 持久化 | `/data`：会话、人物档案、设置、`stickers/` 表情包库、日志（全部 JSON + 图片文件，易于备份） |
+| 持久化 | `/data/qqchat.db`：单个 **SQLite** 库（设置、会话、消息+归档、人物档案与画像、心情、听过的歌、表情包索引、密钥）；表情包图片本体仍在 `stickers/` |
 | 语音合成 | 独立容器 [Piper](https://github.com/rhasspy/piper)（`tools/tts-server.py` 包一层 HTTP，常驻进程缓存模型，约 490MB）——挂了只影响语音，机器人自动降级成打字 |
 | 联网搜索 | 优先用模型端的 Google Search grounding（`/v1beta/…:generateContent` + `google_search` 工具）；不可用时回退到可插拔搜索源（SearxNG JSON / MediaWiki JSON / 通用 HTML） |
 | 健康检查 | 内置极简 HTTP 服务：`/healthz` `/readyz` `/status` |
@@ -87,7 +91,7 @@ dotnet build tests/QQChatAgent.IntegrationHarness -c Release
 dotnet tests/QQChatAgent.IntegrationHarness/bin/Release/net8.0/QQChatAgent.IntegrationHarness.dll
 ```
 
-覆盖 26 个场景（白名单/静默/分句/记忆/档案/设置热更新/掉线/扫码登录/表情包/引用/小表情与戳一戳/模型配置热改/听音乐/链接与转发/语音/撤回/联网搜索），
+覆盖 27 个场景（白名单/静默/分句/记忆/档案/设置热更新/掉线/扫码登录/表情包/引用/小表情与戳一戳/模型配置热改/听音乐/链接与转发/语音/撤回/联网搜索/数据迁移），
 另有面板静态与运行时探针（`tests/QQChatAgent.FrontendProbe`）。
 
 > 注意：测试工程没有引用机器人工程，**改完机器人代码要单独 build 它**，否则跑的还是旧 DLL。

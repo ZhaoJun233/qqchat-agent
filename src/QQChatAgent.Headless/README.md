@@ -144,16 +144,19 @@ secrets:
 
 | 路径 | 内容 |
 | --- | --- |
-| `data/settings.json` | 行为配置（面板设置页的唯一所有者） |
-| `data/conversations.json` | 会话与消息（超出上限的旧消息归档到 `data/archive/*.jsonl`） |
-| `data/member_profiles/*.json` | 人物档案与长期画像 |
-| `stickers/index.json` + `stickers/*.png` | **表情包库**（全库共用一份；与 `data/` 并列，方便单独备份/清理） |
+| `data/qqchat.db` | **SQLite 库**：设置、会话、消息（含归档）、人物档案与画像、心情、听过的歌、表情包索引、密钥。WAL 模式，随同 `-wal/-shm` |
+| `data/legacy-json/` | 老版本 JSON 的留档（首次启动自动导入库之后移到这里，**不删**） |
+| `stickers/*.png` | **表情包图片本体**（索引在库里；二进制不适合塞库，备份/预览/清理都麻烦） |
 | `logs/qqchat.log` | 运行日志 |
 
-> 表情包为什么单独放一层：它是二进制大对象，和 JSON 混在一个目录里既不好备份也不好排查；
-> `stickers/` 整个目录直接删除就能重置表情包（下次启动会重建索引）。
+> 为什么从“一堆 JSON”换成 SQLite：① 会话/消息/档案分散在多个文件里，一次崩溃可能只写了一半，跨文件没法用事务；
+> ② 消息是追加型数据，JSON 每次全量重写（几千条就明显卡）；③ 面板要的“某群更早的发言 / 某人某群的画像 / 归档翻旧账”
+> 在 JSON 上只能全量读进内存再过滤，SQL 一句就能干。
+>
+> 备份：直接拷 `data/qqchat.db`（连同 `-wal/-shm`）就完事；想用 SQL 查配置可以 `json_extract(json,'$.AiDesire')`。
+> 密钥（面板里填过的 API Key）存在 `secrets` 表里，所以**库文件权限是 600**（不跟 `settings` 混在一起，依然不会跟着配置一块被贴出去）。
 
-JSON 均为 UTF-8 不转义中文，`cat` 就能直接看。
+JSON 在库里一律不转义中文，`sqlite3 ... "SELECT text FROM messages LIMIT 3"` 直接看得懂。
 
 ---
 

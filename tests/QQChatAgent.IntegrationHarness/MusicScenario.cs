@@ -123,18 +123,11 @@ public static partial class Program
         Check("★ 这次发言不挂引用（音乐分析触发的，没有触发消息）",
             sends.Count >= 1 && QuotedMessageId(sends[0]) is null);
 
-        var ledger = Path.Combine(dataDir, "data", "music", "listened.json");
-        var ledgerHasSong = false;
-        if (File.Exists(ledger))
-        {
-            // 注意别直接对文本 Contains：JSON 里中文是 \uXXXX 转义的
-            using var doc = System.Text.Json.JsonDocument.Parse(File.ReadAllText(ledger));
-            ledgerHasSong = doc.RootElement.EnumerateArray()
-                .Any(e => e.TryGetProperty("Title", out var t) && t.GetString() == music.Title);
-        }
+        var ledgerHasSong = DbProbe.Count(dataDir,
+            "SELECT COUNT(1) FROM heard_songs WHERE title = $t", ("$t", music.Title)) > 0;
 
         Check("★ “听过的歌”落了台账（下次再分享同一首就不重复下载解码）",
-            ledgerHasSong, File.Exists(ledger) ? "已生成" : "没生成");
+            ledgerHasSong, DbProbe.Dump(dataDir, "SELECT key, title, heard_count FROM heard_songs"));
 
         // ---- 2) 拿不到音源的歌：只给歌词，且如实说明 ----
         openAi.ClearRequests();
