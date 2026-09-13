@@ -1290,6 +1290,56 @@
     });
 
     $("musicTestNow").addEventListener("click", () => { openAudioSources(); });
+
+    // 网易云扫码登录：拿二维码 → 每 2.5 秒问一次状态 → 803 = 成功
+    let qrKey = null;
+    let qrTimer = null;
+    const qrState = (t) => { $("neteaseLoginState").textContent = t; };
+
+    function stopQrPolling() {
+      if (qrTimer) { clearInterval(qrTimer); qrTimer = null; }
+    }
+
+    async function startNeteaseLogin() {
+      stopQrPolling();
+      $("neteaseQr").hidden = true;
+      qrState("正在获取二维码…");
+      try {
+        const r = await api("/api/netease/qr", { method: "POST", body: "{}" });
+        if (!r || !r.qrimg) {
+          qrState("拿不到二维码：" + ((r && r.error) || "（自建接口不可用）"));
+          return;
+        }
+
+        qrKey = r.key;
+        $("neteaseQr").src = r.qrimg;
+        $("neteaseQr").hidden = false;
+        qrState("请用网易云 App 扫码");
+
+        qrTimer = setInterval(async () => {
+          try {
+            const s = await api("/api/netease/qr/check", { method: "POST", body: JSON.stringify({ key: qrKey }) });
+            const code = s && s.code;
+            if (code === 800) { qrState("二维码已过期，重新点“扫码登录”"); stopQrPolling(); $("neteaseQr").hidden = true; }
+            else if (code === 801) { qrState("等待扫码…"); }
+            else if (code === 802) { qrState("已扫码，请在手机上确认"); }
+            else if (code === 803) {
+              qrState("✅ 已登录（VIP 歌也能拿地址了）");
+              $("neteaseQr").hidden = true;
+              stopQrPolling();
+              toast("网易云登录成功");
+            }
+            else if (s && s.error) { qrState("查状态失败：" + s.error); }
+          } catch (err) {
+            qrState("查状态失败：" + err.message);
+          }
+        }, 2500);
+      } catch (err) {
+        qrState("登录请求失败：" + err.message);
+      }
+    }
+
+    $("neteaseLogin").addEventListener("click", startNeteaseLogin);
   }
 
   async function boot() {

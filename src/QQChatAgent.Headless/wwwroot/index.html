@@ -586,6 +586,15 @@
     </div>
 
     <div class="field">
+      <label>网易云登录<span class="hint">VIP 歌曲要登录后才有播放地址（免费歌不需要）；登录态存在自建接口那边</span></label>
+      <div style="display:flex;gap:8px;align-items:center">
+        <button class="ghost-btn" id="neteaseLogin">扫码登录</button>
+        <span class="path-hint" id="neteaseLoginState">未登录</span>
+      </div>
+      <img id="neteaseQr" hidden alt="网易云登录二维码" style="width:180px;height:180px;margin-top:8px;border-radius:8px;background:#fff" />
+    </div>
+
+    <div class="field">
       <label>当场试听一首<span class="hint">用当前输入的音源跑一遍：搜歌 → 歌词 → 低码率音频 → 波形分析 → 模型听感</span></label>
       <div style="display:flex;gap:8px">
         <input type="text" id="audioTestSong" placeholder="歌名 歌手（例如：起风了 买辣椒也用券）" style="flex:1" />

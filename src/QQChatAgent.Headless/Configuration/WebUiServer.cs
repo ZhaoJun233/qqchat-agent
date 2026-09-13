@@ -379,6 +379,13 @@ public sealed class WebUiServer : IDisposable
             return;
         }
 
+        // /api/netease/qr：面板内扫码登录网易云（登录态存在自建 API 容器里，登完 VIP 歌才有播放地址）
+        if (path.StartsWith("/api/netease/qr", StringComparison.OrdinalIgnoreCase))
+        {
+            await HandleNeteaseQrAsync(context, path, method);
+            return;
+        }
+
         // /api/music/test：一键验证“听音乐”链路（搜索 → 歌词 → 低码率音源 → 波形分析）
         // 为什么要这个入口：这条链路依赖外部 API，挂了只能在群里碰运气 ——
         // 这里可以直接跑一遍，把实测结果贴出来（排障与上线验收都用得上）。
@@ -1202,6 +1209,85 @@ public sealed class WebUiServer : IDisposable
         if (bytes.Length > 0)
         {
             await context.Response.OutputStream.WriteAsync(bytes);
+        }
+    }
+
+    /// <summary>
+    /// 面板内的网易云扫码登录（代理到自建 API 的 /login/qr/*）。
+    /// 为什么放在面板里：手机号/密码登录要暴露账号密码，扫码最干净；
+    /// 而且登录态是存在自建 API 那边的，面板只是把二维码拿过来展示、帮忙轮询。
+    /// </summary>
+    private async Task HandleNeteaseQrAsync(HttpListenerContext context, string path, string method)
+    {
+        if (method != "POST")
+        {
+            await WriteJsonAsync(context, 405, new JsonObject { ["error"] = "method not allowed" });
+            return;
+        }
+
+        var baseUrl = _settings.NeteaseBaseUrl.TrimEnd('/');
+        var stamp = DateTimeOffset.Now.ToUnixTimeMilliseconds();
+
+        try
+        {
+            if (path.EndsWith("/check", StringComparison.OrdinalIgnoreCase))
+            {
+                var body = await ReadJsonAsync(context);
+                var key = body?["key"]?.GetValue<string>()?.Trim();
+                if (string.IsNullOrWhiteSpace(key))
+                {
+                    await WriteJsonAsync(context, 400, new JsonObject { ["error"] = "缺少 key" });
+                    return;
+                }
+
+                var check = await GetJsonFromAsync($"{baseUrl}/login/qr/check?key={Uri.EscapeDataString(key)}&timestamp={stamp}");
+                await WriteJsonAsync(context, 200, check ?? new JsonObject { ["error"] = "上游无响应" });
+                return;
+            }
+
+            // 两步：先拿 key，再让上游生成二维码（qrimg=true 直接回 base64 图）
+            var keyJson = await GetJsonFromAsync($"{baseUrl}/login/qr/key?timestamp={stamp}");
+            var unikey = keyJson?["data"]?["unikey"]?.GetValue<string>();
+            if (string.IsNullOrWhiteSpace(unikey))
+            {
+                await WriteJsonAsync(context, 502, new JsonObject
+                {
+                    ["error"] = "拿不到二维码 key（自建网易云接口不可用？）",
+                    ["detail"] = keyJson?.ToJsonString() ?? "(无响应)"
+                });
+                return;
+            }
+
+            var qrJson = await GetJsonFromAsync($"{baseUrl}/login/qr/create?key={Uri.EscapeDataString(unikey)}&qrimg=true&timestamp={stamp}");
+            await WriteJsonAsync(context, 200, new JsonObject
+            {
+                ["ok"] = true,
+                ["key"] = unikey,
+                ["qrimg"] = qrJson?["data"]?["qrimg"]?.GetValue<string>() ?? string.Empty,
+                ["qrurl"] = qrJson?["data"]?["qrurl"]?.GetValue<string>() ?? string.Empty
+            });
+        }
+        catch (Exception ex)
+        {
+            await WriteJsonAsync(context, 500, new JsonObject { ["error"] = ex.Message });
+        }
+    }
+
+    /// <summary>面板登录流程用的 HttpClient（打自建网易云接口；超时短一点，别拖住面板）。</summary>
+    private static readonly HttpClient Http = new() { Timeout = TimeSpan.FromSeconds(15) };
+
+    /// <summary>向自建网易云接口发一个 GET 并解析 JSON（仅面板登录流程用）。</summary>
+    private static async Task<JsonNode?> GetJsonFromAsync(string url)
+    {
+        using var resp = await Http.GetAsync(url);
+        var text = await resp.Content.ReadAsStringAsync();
+        try
+        {
+            return JsonNode.Parse(text);
+        }
+        catch (Exception)
+        {
+            return new JsonObject { ["raw"] = text.Length > 300 ? text[..300] : text };
         }
     }
 
