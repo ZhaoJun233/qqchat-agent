@@ -122,7 +122,15 @@ public sealed class OneBotGateway : IQqChatSource, IDisposable
         var key = isGroup ? "group_id" : "user_id";
         var music = $"{{\"type\":\"music\",\"data\":{{\"type\":{Json(platform)},\"id\":{Json(songId)}}}}}";
         var result = await SendActionAsync(action, $"{{\"{key}\":{targetId},\"message\":[{music}]}}", ct);
-        return result is not null && GetRetcode(result) == 0;
+        var code = result is null ? -999 : GetRetcode(result);
+        if (code != 0)
+        {
+            // 把上游原话打出来：NapCat/NTQQ 各版本对 music 段的接受程度不一样，
+            // 这段日志是判断“到底是不支持还是参数不对”的唯一依据
+            Log($"music 段发送失败 retcode={code}（platform={platform}, id={songId}）：{result?.ToJsonString() ?? "(无响应，可能超时)"}");
+        }
+
+        return code == 0;
     }
 
     /// <summary>

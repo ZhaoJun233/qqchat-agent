@@ -1975,10 +1975,15 @@ public sealed class BotAgent : IDisposable
                     }
 
                     var ok = await _source.SendMusicAsync(shareIsGroup, shareTargetId, "163", songId, CancellationToken.None);
-                    EmitLog(ok ? $"[Music] 已分享卡片「{songToShare}」(# {songId})" : $"[Music] 卡片发送失败（协议端可能不支持）: {songToShare}");
+                    EmitLog(ok ? $"[Music] 已分享卡片「{songToShare}」(# {songId})" : $"[Music] 卡片发送失败，改用链接分享: {songToShare}");
+
+                    // 协议端不接卡片（NapCat 各版本对 music 段的接受程度不一样）时退化成发链接：
+                    // QQ 客户端会把网易云链接自己渲染成卡片，效果差不多，但绝不能什么都不发
                     if (!ok)
                     {
-                        return;
+                        var link = $"https://music.163.com/song?id={songId}";
+                        var sentLink = await _source.SendTextAsync(shareIsGroup, shareTargetId, link, CancellationToken.None);
+                        EmitLog(sentLink ? $"[Music] 已用链接分享：{link}" : $"[Music] 链接也发送失败：{link}");
                     }
 
                     // 卡片发出去了，接着真去听一遍：下一轮发言时它就“听过这首歌”
