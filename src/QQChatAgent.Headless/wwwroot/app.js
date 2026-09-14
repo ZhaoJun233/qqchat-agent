@@ -805,9 +805,10 @@
     if (h) h.hidden = true;
   }
 
-  /* ── 设置页分节导航 ──
-     卡片一多，“找个设置项”就得滑上滑下。这里按每张卡片的 h3 生成一排跳转胶囊：
-     点一下滚过去，滚动时自动高亮当前所在的那节。标题是读 DOM 的 —— 以后加卡片不用改这里。 */
+  /* ── 设置页分节导航（左侧分节栏，一次显示一节）──
+     卡片一多：堆在一起会“一块一块”地乱，滑来滑去又累。这里按每张卡片的 h3 生成一串分节按钮：
+     点一下只显示那一节（宽屏是左侧竖栏，窄屏是顶部横滑的胶囊；最后一枚“全部显示”保持单列堆叠）。
+     标题是读 DOM 的 —— 以后加卡片不用改这里。 */
   let refreshSettingsNav = null;
 
   /*
@@ -825,6 +826,12 @@
     const notes = document.querySelectorAll("#pageSettings .card-head > p, #pageSettings .card > p.path-hint");
     for (const p of notes) {
       if (p.dataset.foldReady === "1") continue;
+
+      // 这一节当前没显示（分节切换把其它卡片 hidden 了）：量不出高度，也**不能**打标记，
+      // 否则切到它时已经带着 foldReady 了，就再也不折（踩过：线上 0/12 张卡片被折）。
+      const card = p.closest(".card");
+      if (card && card.hidden) continue;
+
       p.dataset.foldReady = "1";
 
       // 先折上再量：没折的时候 scrollHeight 与 clientHeight 都是全文高度，量不出“会不会被截”。
@@ -856,7 +863,7 @@
     if (!nav || !scroller || !inner || nav.dataset.ready === "1") return;
 
     const cards = Array.from(inner.querySelectorAll(":scope > .card"));
-    if (cards.length < 2) return;   // 只有一两张卡片就不必导航了
+    if (cards.length < 2) return;   // 只有一两张卡片就不必分节了
     nav.dataset.ready = "1";
 
     function titleOf(card, i) {
@@ -873,32 +880,57 @@
       return text || `第 ${i + 1} 节`;
     }
 
-    const links = cards.map((card, i) => {
+    const labels = cards.map((c, i) => titleOf(c, i));
+    const links = [];
+    let current = 0;
+
+    /* 切到某一节：-1 = “全部显示”（单列堆到尾）。
+       切换只动 hidden，不碰表单字段 —— 保存契约（每个待保存字段都在 DOM 里）不受影响。 */
+    function showSection(index, keepScroll) {
+      const all = index < 0;
+      current = all ? -1 : Math.max(0, Math.min(cards.length - 1, index));
+      cards.forEach((c, k) => { c.hidden = !all && k !== current; });
+      links.forEach((b, k) => {
+        const on = all ? k === links.length - 1 : k === current;
+        b.classList.toggle("active", on);
+        // 窄屏那排胶囊是横向滑动的：把当前项带进可视区，否则高亮了也看不见
+        if (on && typeof b.scrollIntoView === "function") {
+          b.scrollIntoView({ block: "nearest", inline: "nearest" });
+        }
+      });
+      if (!keepScroll) scroller.scrollTop = 0;
+      foldCardNotes();   // 卡片刚显示出来，现在才量得出“说明有没有被截断”
+      try {
+        history.replaceState(null, "", all ? "#sec-all" : "#sec-" + current);
+      } catch (err) { /* 隐私模式下 replaceState 可能被禁：无所谓 */ }
+    }
+
+    cards.forEach((card, i) => {
       const btn = document.createElement("button");
       btn.type = "button";
       btn.className = "section-link";
-      btn.textContent = titleOf(card, i);
-      btn.title = btn.textContent;
-      btn.addEventListener("click", () => {
-        setActive(btn);
-        card.scrollIntoView({ behavior: "smooth", block: "start" });
-      });
+      btn.textContent = labels[i];
+      btn.title = labels[i];
+      btn.addEventListener("click", () => showSection(i));
       nav.appendChild(btn);
-      return btn;
+      links.push(btn);
     });
 
-    function setActive(active) {
-      links.forEach((b) => b.classList.toggle("active", b === active));
-      // 手机上这排胶囊是横向滑动的：把当前项带进可视区域，否则高亮了也看不见
-      if (active && typeof active.scrollIntoView === "function") {
-        active.scrollIntoView({ block: "nearest", inline: "nearest" });
-      }
-    }
+    // 最后一枚：全部显示（单列从头列到尾，方便通读或 Ctrl+F 找某个字段）
+    const allBtn = document.createElement("button");
+    allBtn.type = "button";
+    allBtn.className = "section-link section-link-all";
+    allBtn.textContent = "全部显示";
+    allBtn.title = "把这十几节按单列从头列到尾";
+    allBtn.addEventListener("click", () => showSection(-1));
+    nav.appendChild(allBtn);
+    links.push(allBtn);
 
-    // “当前在哪一节” = **可视区里那个顶部最靠近视口顶部的卡片**。
-    // 不用“最后一个越过顶部的卡片”那种算法：多列流里卡片是“填满一列再开下一列”，
-    // DOM 顺序与视觉顺序不完全一致，滚到下一列的顶部时高亮会莫名其妙跳回去。
-    function currentLink() {
+    // 重新进入设置页（或从 hash 进来）时，把当前节重新亮一次
+    refreshSettingsNav = () => showSection(current, true);
+
+    // “滚动到哪一节”只在“全部显示”下才有意义（单节模式里就那一张卡片）
+    function setActiveByScroll() {
       const box = scroller.getBoundingClientRect();
       let best = 0;
       let bestDist = Infinity;
@@ -908,27 +940,23 @@
         const dist = Math.abs(r.top - (box.top + 8));
         if (dist < bestDist) { bestDist = dist; best = i; }
       });
-      return links[best];
+      links.forEach((b, k) => b.classList.toggle("active", k === best));
     }
 
-    refreshSettingsNav = () => { setActive(currentLink()); foldCardNotes(); };
-
-    // 滚动时高亮（用 rAF 合并：滚动事件一秒能来上百次）
     const raf = window.requestAnimationFrame || ((fn) => setTimeout(fn, 16));
     let scheduled = false;
     scroller.addEventListener("scroll", () => {
-      if (scheduled) return;
+      if (current >= 0 || scheduled) return;   // 单节模式：不用跟着滚动改高亮
       scheduled = true;
       raf(() => {
         scheduled = false;
-        setActive(currentLink());
+        setActiveByScroll();
       });
     }, { passive: true });
 
-    setActive(links[0]);
-
-    // 导航建好后顺手折一下说明（要等页面真显示出来、元素有尺寸了才能判断“有没有被截断”）
-    foldCardNotes();
+    // 刷新后回到同一节（hash），否则默认第一节
+    const m = /^#sec-(\d+|all)$/.exec(location.hash || "");
+    showSection(m ? (m[1] === "all" ? -1 : parseInt(m[1], 10)) : 0);
   }
 
   async function loadSettings() {

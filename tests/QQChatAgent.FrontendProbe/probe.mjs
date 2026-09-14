@@ -112,9 +112,29 @@ check(
 );
 check("JS：boot() 里真的调用了", /initSettingsNav\(\);/.test(js));
 check(
-  "★ 宽屏不留大片空白：设置页多列排布按窗口宽度自动铺",
-  /columns:\s*420px/.test(css) && /break-inside:\s*avoid/.test(css),
-  "写死 2 列 / 1240px 上限时，宽屏右边会空一大块；grid 又会把矮卡片下方留空"
+  "★ 宽屏改成左侧分节栏 + 单列内容（不再把卡片铺成“一块一块”）",
+  /#pageSettings\s*\{[^}]*grid-template-columns:\s*208px/.test(css) &&
+    /\.settings-inner\s*\{[^}]*max-width:\s*980px/.test(css) &&
+    /\.section-nav\s*\{[^}]*flex-direction:\s*column/.test(css) &&
+    !/[\s{;]columns:\s*\d+px/.test(css),
+  "高矮不一的卡片横着铺开就是“一块一块”的乱（号主原话），改成一节一节看"
+);
+check(
+  "★ 隐藏的那一节真的不占位（.card 的 display:flex 会盖掉 [hidden] 默认样式）",
+  /\.card\[hidden\]\s*\{[^}]*display:\s*none/.test(css)
+);
+check(
+  "★ JS：切换分节只动 hidden，不碰表单字段（保存契约不变）",
+  js.includes("showSection") && /c\.hidden = !all && k !== current/.test(js)
+);
+check(
+  "★ 留了“全部显示”出口（单列堆到尾，方便通读 / Ctrl+F 找字段）",
+  js.includes("section-link-all") && js.includes('"#sec-all"')
+);
+check("刷新/带 hash 进来能回到同一节", /#sec-\(\\d\+\|all\)/.test(js) && js.includes("replaceState"));
+check(
+  "隐藏卡片里的说明不打“已处理”标记（否则切过去就再也不折了）",
+  /card\.hidden\)\s*continue/.test(js)
 );
 
 /* ─────────── 1b3) 可读性：不把字堆成一团 ─────────── */

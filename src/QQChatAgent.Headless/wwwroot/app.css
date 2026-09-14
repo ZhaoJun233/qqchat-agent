@@ -571,41 +571,74 @@ textarea { resize: vertical; line-height: 1.5; }
   background: var(--subtle-hover);
 }
 
+/* 内容区自己滚（不撑开页面），底部保存栏常驻不动 */
 .settings-scroll { flex: 1 1 auto; overflow-y: auto; min-height: 0; }
 
 /*
- * 设置页能有多宽用多宽：原来钉死在 840px，在宽屏（12 寸以上、全屏浏览器）就变成
- * “左边一条卡片、右边一大块空白”。宽屏下改多列排布（auto-fill：窗口多宽就铺多少列，
- * 不再写死 2 列 / 3 列），窄屏（手机/平板）仍是单列。
+ * 设置页宽度：窄屏单列铺满；宽屏的布局在下面的 @media 里（左侧分节栏 + 单列内容）。
  */
 .settings-inner { width: 100%; max-width: 1240px; padding: 20px 32px 32px; display: flex; flex-direction: column; gap: 14px; }
 
+/* 被隐藏的那一节不占位。⚠ .card 自己写了 display:flex，会盖掉浏览器对 [hidden] 的默认样式，
+   所以必须显式写一条（否则“切换分节”看上去没反应）。 */
+.card[hidden] { display: none; }
+
+/*
+ * 宽屏：设置页 = 左侧分节栏 + 右侧内容，**一次只显示一节**。
+ *
+ * 为什么不摆多列瀑布：之前把十几张卡片横着铺开，卡片高矮不一、形状各不相同，
+ * 扫一眼就是“一块一块”的乱（号主原话：“这一块一块地排版你不觉得太乱了吗”）。
+ * 设置项本来就该一节一节看：左侧把所有小节列出来（一眼看全、点一下就切），
+ * 右侧只渲染当前那一节 —— 单列、宽度收在 980px（宽屏上一行太长反而难读）。
+ * 想看全部也行：侧栏最后一枚“全部显示”把它们按**单列**从头列到尾（方便通读 / Ctrl+F）。
+ */
 @media (min-width: 1180px) {
-  /*
-   * 用多列流（像报纸）排卡片，不用 grid —— 卡片高矮差很多（听音乐 940px、外观 158px），
-   * grid 每行按最高的那张算行高，矮卡片下面就空着。1440px 下实测：
-   *   原来（写死两列） 4330px 高、卡片只占 74%
-   *   grid auto-fill   3611px 高、64%
-   *   多列流（现在）   2993px 高、77%（1280px 下 3441px、九成以上）
-   * 同一屏内容更多、要滚的更少，“空白太多”就是公这么治的。
-   */
-  .settings-inner {
-    display: block;
-    max-width: none;
-    columns: 420px;
-    column-gap: 14px;
+  #pageSettings {
+    display: grid;
+    grid-template-columns: 208px minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr) auto;
   }
 
-  /* 卡片不能被撕到两列去（半张卡片没法看）；间距用 margin 顶（多列流没有 gap） */
-  .settings-inner > * { break-inside: avoid; margin-bottom: 14px; }
+  /* 竖着排的分节栏（窄屏时它是顶部那排横滑胶囊，见上） */
+  .section-nav {
+    grid-column: 1;
+    grid-row: 1;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 2px;
+    padding: 12px 8px;
+    overflow-x: hidden;
+    overflow-y: auto;
+    border-bottom: none;
+    border-right: 1px solid var(--divider);
+  }
 
-  /* 标题 / 说明 / 日志卡片横跨所有列（日志框窄了就看不到了） */
-  .settings-inner > .page-title,
-  .settings-inner > .page-desc,
-  .settings-inner > .log-card { column-span: all; }
+  .section-link {
+    text-align: left;
+    padding: 7px 10px;
+    border: none;
+    border-radius: 6px;
+    font-size: 13px;
+    position: relative;
+  }
+  .section-link.active { background: var(--subtle-hover); }
+  .section-link.active::before {
+    content: "";
+    position: absolute;
+    left: -2px; top: 50%;
+    transform: translateY(-50%);
+    width: 3px; height: 16px;
+    border-radius: 2px;
+    background: var(--accent);
+  }
+  .section-link-all { margin-top: 8px; color: var(--text-tertiary); }
 
-  /* 卡片窄了一半后，内部的“两列小格子”改回单列，否则挤成一指宽 */
-  .settings-inner .grid-2 { grid-template-columns: 1fr; }
+  .settings-scroll { grid-column: 2; grid-row: 1; }
+  .settings-footer { grid-column: 1 / -1; grid-row: 2; }
+
+  /* 一次一节 → 单列；卡片内部原有的两列小格子保持两列（这时它又宽回来了） */
+  .settings-inner { display: block; max-width: 980px; margin: 0 auto; }
+  .settings-inner > * { margin-bottom: 14px; }
 }
 
 /* 常驻底部操作栏 */
