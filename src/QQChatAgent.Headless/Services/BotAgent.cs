@@ -2736,11 +2736,21 @@ public sealed class BotAgent : IDisposable
         return allOk;
     }
 
-    /// <summary>按句末标点分句；过短的句子合并到相邻段，最多切 4 段（避免连发刷屏）。</summary>
+    /// <summary>
+    /// 按句末标点分句；过短的句子合并到相邻段，最多切 4 段（避免连发刷屏）。
+    ///
+    /// 这里踩过的坑（号主反馈“对标点或小数错误分段”）：
+    ///   • 半角 `.` 曾经无条件当句末 —— “3.14”“1.5 倍”“v1.2”“github.com” 全被拦腰切；
+    ///   • 连续的句末标点被拆开 —— “好耶！！！” 会在中间断，第二段以 “！！” 开头；
+    ///   • 收尾的引号/括号落到下一段 —— “他说「好。」” 之后那段以 “」” 开头。
+    /// 现在：半角点看前后文（前后是数字/字母就不算句末）、连续标点一次收走、
+    /// 收尾符号跟着本段走；非常长的句子才退一步在逗号处断（不会憋出一条千字消息）。
+    /// </summary>
     private static List<string> SplitSentences(string text)
     {
         const int MinSegmentLength = 6;
         const int MaxSegments = 4;
+        const int SoftBreakLength = 60;   // 句内逗号处断行的长度下限
 
         var trimmed = text.Trim();
         if (trimmed.Length <= MinSegmentLength * 2)
@@ -2750,16 +2760,46 @@ public sealed class BotAgent : IDisposable
 
         var segments = new List<string>();
         var current = new System.Text.StringBuilder();
-        foreach (var ch in trimmed)
+        for (var i = 0; i < trimmed.Length; i++)
         {
+            var ch = trimmed[i];
             current.Append(ch);
-            if (!IsBreakChar(ch) || current.Length < MinSegmentLength)
+
+            if (ch == '\n')
             {
-                continue; // 太短不单独成段，继续往后攒
+                AddSegment(segments, current, MinSegmentLength);
+                continue;
             }
 
-            segments.Add(current.ToString().Trim());
-            current.Clear();
+            // 句内逗号：只有句子已经很长时才在它后面断（避免一逗就断、也避免千字一段）
+            if (ch is '，' or '、' or '；' or ',' or ';' or '：' or ':')
+            {
+                if (current.Length >= SoftBreakLength)
+                {
+                    AddSegment(segments, current, MinSegmentLength);
+                }
+
+                continue;
+            }
+
+            if (!IsSentenceEnder(trimmed, i))
+            {
+                continue;
+            }
+
+            // 连续的句末标点一次收走：“！！！”“……”“？！” 不该被拆开
+            while (i + 1 < trimmed.Length && IsSentenceEnder(trimmed, i + 1))
+            {
+                current.Append(trimmed[++i]);
+            }
+
+            // 收尾的引号 / 括号跟着本段走：“好。」” 不断在。后面
+            while (i + 1 < trimmed.Length && IsSentenceCloser(trimmed[i + 1]))
+            {
+                current.Append(trimmed[++i]);
+            }
+
+            AddSegment(segments, current, MinSegmentLength);
         }
 
         // 尾部残句并入上一段，避免丢字
@@ -2787,7 +2827,53 @@ public sealed class BotAgent : IDisposable
         return segments.Where(s => s.Length > 0).ToList();
     }
 
-    private static bool IsBreakChar(char ch) => ch is '。' or '！' or '？' or '!' or '?' or '…' or '\n' or '.';
+    /// <summary>够长就单独成段，否则继续往后攒（短句与下一句合并，读起来更像人）。</summary>
+    private static void AddSegment(List<string> segments, System.Text.StringBuilder current, int minLength)
+    {
+        if (current.Length < minLength)
+        {
+            return;
+        }
+
+        segments.Add(current.ToString().Trim());
+        current.Clear();
+    }
+
+    /// <summary>
+    /// 这个位置算不算“句末”。半角点 / 叹号要额外看前后文：
+    /// 前后是数字就是小数（3.14 / v1.2），后面紧接字母就是域名或文件名（github.com / a.exe）。
+    /// </summary>
+    private static bool IsSentenceEnder(string text, int index)
+    {
+        var ch = text[index];
+        if (ch is '。' or '！' or '？' or '…' or '．' or '｡')
+        {
+            return true;
+        }
+
+        if (ch is not '!' and not '?' and not '.')
+        {
+            return false;
+        }
+
+        if (ch != '.')
+        {
+            return true;
+        }
+
+        var before = index > 0 ? text[index - 1] : '\0';
+        var after = index + 1 < text.Length ? text[index + 1] : '\0';
+        if (char.IsDigit(before) || char.IsDigit(after))
+        {
+            return false;   // 小数、版本号、IP、时间
+        }
+
+        return !char.IsLetter(after);   // 紧接字母：github.com / 文件名
+    }
+
+    /// <summary>收尾符号（引号、括号、波浪号）：断句时留在前一段。</summary>
+    private static bool IsSentenceCloser(char ch)
+        => ch is '」' or '』' or '】' or '》' or '〉' or '）' or ')' or ']' or '”' or '’' or '～' or '~' or '"' or '\'' or '〗' or '〞';
 
     // ══════════ 内部辅助 ══════════
 

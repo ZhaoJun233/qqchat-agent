@@ -367,6 +367,41 @@ public static partial class Program
         Check("分句后内容完整不丢字", string.Concat(sends) == "第一句话在这里。第二句话也很长。第三句话继续补充。", string.Join(" | ", sends));
         Check("分句后每段只包含一个句子", sends.All(s => s.Count(c => c is '。') <= 1), string.Join(" | ", sends));
 
+        // ---- 标点边界：小数 / 版本号 / 域名 / 连续标点 / 收尾引号都不能被切断 ----
+        // 号主反馈“对标点或小数错误分段”：半角点以前无条件当句末。
+        const string tricky = "圆周率是 3.14，速度调到 1.5 倍。仓库在 https://github.com/foo/bar 这里，版本 v1.2.3。太厉害了！！！真的「服了。」然后没了。";
+        openAi.ClearRequests();
+        openAi.EnqueueReply("{\"suitability\": 90, \"reply\": " + System.Text.Json.JsonSerializer.Serialize(tricky) + "}");
+        var mark = protocol.ActionsReceived.Count;
+        await protocol.SendGroupMessageAsync(99999, 20002, "老王", "@机器人 再说说", 7302, mentionBot: true, ct: cts.Token);
+        await Task.Delay(4000);
+
+        var trickySends = protocol.ActionsReceived.Skip(mark)
+            .Where(a => a["action"]?.GetValue<string>() == "send_group_msg")
+            .Select(MessageText)
+            .ToList();
+        var joined = string.Join(" | ", trickySends);
+
+        Check("★ 内容一字不差（拼接后与原文完全一致）", string.Concat(trickySends) == tricky, joined);
+        Check("★ 小数不被切断（3.14 / 1.5 / v1.2.3 完整）",
+            trickySends.Any(s => s.Contains("3.14")) && trickySends.Any(s => s.Contains("1.5")) &&
+            trickySends.Any(s => s.Contains("v1.2.3")) &&
+            !trickySends.Any(s => s.EndsWith("3.") || s.EndsWith("1.") || s.EndsWith("v1.2.")),
+            joined);
+        Check("★ 域名不被切断（github.com 完整，不会出现以 github. 结尾的段）",
+            trickySends.Any(s => s.Contains("github.com")) && !trickySends.Any(s => s.EndsWith("github.")),
+            joined);
+        Check("★ 连续标点不被拆开（！！！ 与 …… 整块留在同一段）",
+            trickySends.Any(s => s.Contains("！！！")),
+            joined);
+        Check("★ 收尾引号跟着本段（不会有以 」 开头的段）",
+            !trickySends.Any(s => s.TrimStart().StartsWith('」')) && trickySends.Any(s => s.Contains("「服了。」")),
+            joined);
+        Check("★ 段首不会是标点碎片（不会出现以 ，。！？ 开头的段）",
+            trickySends.All(s => s.Length > 0 && "，。！？,!".IndexOf(s.TrimStart()[0]) < 0),
+            joined);
+        Check("段数不超过上限（4 段）", trickySends.Count is > 0 and <= 4, $"{trickySends.Count} 段");
+
         await bot.StopAsync();
     }
 
