@@ -107,6 +107,13 @@ public static class BotConfig
     [nameof(AppSettings.MusicSources)] = new[] { "QQCHAT_MUSIC_SOURCES" },
     [nameof(AppSettings.NeteaseBaseUrl)] = new[] { "QQCHAT_NETEASE_BASE_URL" },
     [nameof(AppSettings.EnableLinkPreview)] = new[] { "QQCHAT_LINK_PREVIEW" },
+    [nameof(AppSettings.EnableWebSearch)] = new[] { "QQCHAT_WEB_SEARCH" },
+    [nameof(AppSettings.WebSearchUseModelSearch)] = new[] { "QQCHAT_SEARCH_USE_MODEL" },
+    [nameof(AppSettings.WebSearchSources)] = new[] { "QQCHAT_SEARCH_SOURCES" },
+    [nameof(AppSettings.WebSearchMaxResults)] = new[] { "QQCHAT_SEARCH_MAX_RESULTS" },
+    [nameof(AppSettings.WebSearchCooldownSeconds)] = new[] { "QQCHAT_SEARCH_COOLDOWN" },
+    [nameof(AppSettings.WebSearchTimeoutSeconds)] = new[] { "QQCHAT_SEARCH_TIMEOUT" },
+    [nameof(AppSettings.WebSearchReadMaxChars)] = new[] { "QQCHAT_SEARCH_READ_CHARS" },
     [nameof(AppSettings.EnableVoice)] = new[] { "QQCHAT_ENABLE_VOICE" },    [nameof(AppSettings.VoiceName)] = new[] { "QQCHAT_VOICE" },
     [nameof(AppSettings.VoiceSpeed)] = new[] { "QQCHAT_VOICE_SPEED" },
     [nameof(AppSettings.VoiceMaxChars)] = new[] { "QQCHAT_VOICE_MAX_CHARS" },
@@ -190,6 +197,7 @@ public static class BotConfig
         s.WebSearchUseModelSearch = Bool("QQCHAT_SEARCH_USE_MODEL") ?? s.WebSearchUseModelSearch;
         s.WebSearchSources = Str("QQCHAT_SEARCH_SOURCES") ?? s.WebSearchSources;
         s.WebSearchMaxResults = Int("QQCHAT_SEARCH_MAX_RESULTS") ?? s.WebSearchMaxResults;
+        s.WebSearchCooldownSeconds = Int("QQCHAT_SEARCH_COOLDOWN") ?? s.WebSearchCooldownSeconds;
         s.WebSearchTimeoutSeconds = Int("QQCHAT_SEARCH_TIMEOUT") ?? s.WebSearchTimeoutSeconds;
         s.WebSearchReadMaxChars = Int("QQCHAT_SEARCH_READ_CHARS") ?? s.WebSearchReadMaxChars;
         s.EnableVoice = Bool("QQCHAT_ENABLE_VOICE") ?? s.EnableVoice;

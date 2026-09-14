@@ -1010,9 +1010,10 @@ public sealed class BotAgent : IDisposable
     {
         var key = conversation.SourceKey;
         var now = DateTimeOffset.Now;
-        if (_lastSearch.TryGetValue(key, out var last) && now - last < TimeSpan.FromSeconds(SearchCooldownSeconds))
+        var cooldown = TimeSpan.FromSeconds(Math.Max(0, _settings.WebSearchCooldownSeconds));
+        if (cooldown > TimeSpan.Zero && _lastSearch.TryGetValue(key, out var last) && now - last < cooldown)
         {
-            EmitLog($"[Search] 这次不搜（同会话 {SearchCooldownSeconds}s 内刚搜过）：{query}");
+            EmitLog($"[Search] 这次不搜（同会话 {cooldown.TotalSeconds:F0}s 内刚搜过）：{query}");
             return;
         }
 
@@ -1301,9 +1302,22 @@ public sealed class BotAgent : IDisposable
     /// <summary>每个会话刚查到的资料，交给下一轮回复用（用掉就清）。</summary>
     private readonly System.Collections.Concurrent.ConcurrentDictionary<string, string> _searchNotes = new();
 
-    /// <summary>同会话两次联网搜索的最小间隔（秒）。</summary>
-    private const int SearchCooldownSeconds = 30;
+    /// <summary>
+    /// 把“这一轮没说出口的资料”放回待办：搜索 = 一次真实模型调用 + 几秒等待，
+    /// 模型选择沉默/说了句跟资料无关的话/请求失败时都不能白白浪费（下一轮还能说）。
+    /// </summary>
+    private void KeepSearchNotes(BotConversation conversation, string? searchText, string why)
+    {
+        if (string.IsNullOrWhiteSpace(searchText))
+        {
+            return;
+        }
 
+        _searchNotes.AddOrUpdate(conversation.SourceKey, searchText, (_, old) => old + "\n\n" + searchText);
+        EmitLog($"[Search] 查到的资料这次没说出去（{why}）→ 留着下一轮说");
+    }
+
+    /// <summary>同会话两次联网搜索的最小间隔（秒）。</summary>
     /// <summary>听音乐：识别到的分享 → 网易云歌词 + 低码率音频 → 波形分析。Start() 里组装。</summary>
     private MusicService? _music;
 
@@ -2135,6 +2149,7 @@ public sealed class BotAgent : IDisposable
         {
             SetThinking(conversation, false);
             EmitLog($"模型请求失败: {ex.Message}");
+            KeepSearchNotes(conversation, searchText, "模型请求失败");
             return;
         }
 
@@ -2143,11 +2158,19 @@ public sealed class BotAgent : IDisposable
 
         // 发言适合度门槛：以前只写在提示词里、代码不执行；现在真正生效。
         // 模型未按 JSON 输出（Suitability == null）时按普通文本回复处理，不拦截。
+        // 例外：**这一轮带着刚查到的资料**时不受门槛限制 —— 模型自评“现在插嘴合适吗”时
+        // 往往给低分（它只是回来汇报查到的东西，不是要插话），结果就是“查了半天啥也不说”。
+        // 查都查了，就得让它说出来；真不想说（空回复）时下面会把资料留给下一轮。
         var threshold = Math.Clamp(_settings.SuitabilityThreshold, 0, 100);
         if (result.Suitability is int score && score < threshold)
         {
-            EmitLog($"适合度不足 → 沉默（评分 {score} < 阈值 {threshold}，{elapsed:F0}ms）: {conversation.Name}");
-            return;
+            if (searchText is null)
+            {
+                EmitLog($"适合度不足 → 沉默（评分 {score} < 阈值 {threshold}，{elapsed:F0}ms）: {conversation.Name}");
+                return;
+            }
+
+            EmitLog($"适合度不足（{score} < {threshold}）但本轮带着刚查到的资料 → 照样说");
         }
 
         // 表情包：模型可以只发图不说话，也可以“文字 + 图”。
@@ -2294,6 +2317,7 @@ public sealed class BotAgent : IDisposable
         {
             var why = result.Suitability is int s2 ? $"自评 {s2}" : "空回复";
             EmitLog($"模型选择沉默（{why}，{elapsed:F0}ms）: {conversation.Name}");
+            KeepSearchNotes(conversation, searchText, why);
             return;
         }
 
@@ -2303,6 +2327,7 @@ public sealed class BotAgent : IDisposable
         if (reply.Length > 0 && IsRepeatingOwnLastMessage(conversation, reply))
         {
             EmitLog($"检测到复读（与上一条自己的发言完全相同）→ 沉默（{elapsed:F0}ms）: {Shorten(reply, 40)}");
+            KeepSearchNotes(conversation, searchText, "复读守卫");
             return;
         }
 

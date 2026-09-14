@@ -879,6 +879,7 @@
     $("setEnableWebSearch").checked = r.enableWebSearch === true;    $("setWebSearchUseModelSearch").checked = r.webSearchUseModelSearch !== false;
     $("setWebSearchSources").value = r.webSearchSources || "";
     $("setWebSearchMaxResults").value = r.webSearchMaxResults;
+    $("setWebSearchCooldown").value = r.webSearchCooldownSeconds;
     $("setWebSearchTimeoutSeconds").value = r.webSearchTimeoutSeconds;
     $("setEnableVoice").checked = r.enableVoice === true;
     $("setVoiceName").value = r.voiceName || "";
@@ -966,6 +967,7 @@
       webSearchUseModelSearch: $("setWebSearchUseModelSearch").checked,
       webSearchSources: $("setWebSearchSources").value.trim(),
       webSearchMaxResults: Number($("setWebSearchMaxResults").value),
+      webSearchCooldownSeconds: Number($("setWebSearchCooldown").value),
       webSearchTimeoutSeconds: Number($("setWebSearchTimeoutSeconds").value),
       enableVoice: $("setEnableVoice").checked,
       voiceName: $("setVoiceName").value.trim(),

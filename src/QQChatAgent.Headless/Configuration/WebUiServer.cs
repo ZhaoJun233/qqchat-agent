@@ -562,6 +562,7 @@ public sealed class WebUiServer : IDisposable
         if (body["webSearchUseModelSearch"] is JsonNode wsm) s.WebSearchUseModelSearch = wsm.GetValue<bool>();
         if (body["webSearchSources"] is JsonNode wss) s.WebSearchSources = wss.GetValue<string>().Trim();
         if (body["webSearchMaxResults"] is JsonNode wsr) s.WebSearchMaxResults = Math.Clamp(wsr.GetValue<int>(), 1, 10);
+        if (body["webSearchCooldownSeconds"] is JsonNode wsc) s.WebSearchCooldownSeconds = Math.Clamp(wsc.GetValue<int>(), 0, 86400);
         if (body["webSearchTimeoutSeconds"] is JsonNode wst) s.WebSearchTimeoutSeconds = Math.Clamp(wst.GetValue<int>(), 5, 60);
         if (body["enableLinkPreview"] is JsonNode elp) s.EnableLinkPreview = elp.GetValue<bool>();
         if (body["linkPreviewTimeoutSeconds"] is JsonNode lpt) s.LinkPreviewTimeoutSeconds = Math.Clamp(lpt.GetValue<int>(), 2, 30);
@@ -942,6 +943,7 @@ public sealed class WebUiServer : IDisposable
          ["webSearchUseModelSearch"] = s.WebSearchUseModelSearch,
          ["webSearchSources"] = s.WebSearchSources,
          ["webSearchMaxResults"] = s.WebSearchMaxResults,
+         ["webSearchCooldownSeconds"] = s.WebSearchCooldownSeconds,
          ["webSearchTimeoutSeconds"] = s.WebSearchTimeoutSeconds,
         ["enableLinkPreview"] = s.EnableLinkPreview,
         ["linkPreviewTimeoutSeconds"] = s.LinkPreviewTimeoutSeconds,

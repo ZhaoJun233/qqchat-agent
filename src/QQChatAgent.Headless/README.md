@@ -130,6 +130,7 @@ secrets:
 | `QQCHAT_SEARCH_USE_MODEL` | `1` | 优先用“模型自带搜索”（检索在服务商侧完成，结果带来源）；置 `0` 就只用下面的搜索源模板 |
 | `QQCHAT_SEARCH_SOURCES` | Wikipedia API | 兑底搜索源模板（每行 `name|url`，`{q}` 是查询词；`searx*`/`wiki*` 有专用解析） |
 | `QQCHAT_SEARCH_MAX_RESULTS` | `5` | 每次给模型看几条结果 |
+| `QQCHAT_SEARCH_COOLDOWN` | `30` | 同一会话两次联网搜索的最小间隔（秒）；`0` = 不限 |
 | `QQCHAT_SEARCH_TIMEOUT` | `20` | 搜索 / 读页面超时（秒） |
 | `QQCHAT_SEARCH_READ_CHARS` | `1800` | `read` 抓到的正文截断长度（字） |
 | `TZ` | `Asia/Shanghai` | 影响消息时间戳与模型看到的"现在几点" |

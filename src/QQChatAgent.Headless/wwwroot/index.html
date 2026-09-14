@@ -479,8 +479,13 @@
           <label class="switch-row">
             <input type="checkbox" id="setEnableWebSearch" />
             <span class="switch"></span>
-            <span>启用联网搜索（模型可以要求查资料）<span class="hint">同一会话 30 秒内只查一次</span></span>
+            <span>启用联网搜索（模型可以要求查资料）<span class="hint">同一会话说两次搜索的间隔见下面（可调）</span></span>
           </label>
+
+          <div class="field">
+            <label>同一会话两次搜索的最小间隔（秒）<span class="hint">0 = 不限；网络慢/群多时调大一点，少排队</span></label>
+            <input type="number" id="setWebSearchCooldown" min="0" max="86400" step="5" />
+          </div>
 
           <label class="switch-row">
             <input type="checkbox" id="setWebSearchUseModelSearch" />

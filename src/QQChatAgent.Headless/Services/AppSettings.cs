@@ -207,6 +207,13 @@ public sealed class AppSettings
     /// <summary>每次给模型看几条搜索结果。</summary>
     public int WebSearchMaxResults { get; set; } = 5;
 
+    /// <summary>
+    /// 同一个会话两次联网搜索的最小间隔（秒）；0 = 不限。
+    /// 为什么要有它：一次搜索 = 一次真实模型调用 + 几秒等待，群里连问几个问题就排队了。
+    /// 为什么做成设置项：不同部署的网络快慢、群多少差很多，写死 30 秒众口难调。
+    /// </summary>
+    public int WebSearchCooldownSeconds { get; set; } = 30;
+
     /// <summary>搜索/读页面的超时（秒）。</summary>
     public int WebSearchTimeoutSeconds { get; set; } = 20;
 

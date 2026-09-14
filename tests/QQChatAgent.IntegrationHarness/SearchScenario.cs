@@ -128,6 +128,95 @@ public static partial class Program
             PrivateSendsSince(protocol, privateMark).Any(a => MessageText(a).Contains("我再查一次")),
             string.Join(" | ", PrivateSendsSince(protocol, privateMark).Select(MessageText)));
 
+        // ---- 3b) 冷却时间可调（面板里改，不再是写死的 30 秒）----
+        openAi.GroundingAnswer = "独特答案：白子的自行车是『测试专用事实XYZ』。";
+        using (var cdResp = await http.PostAsync($"http://127.0.0.1:{panelPort}/api/settings",
+                   new StringContent("""{"webSearchCooldownSeconds":0}""", Encoding.UTF8, "application/json"), cts.Token))
+        {
+            Check("★ 面板能改搜索冷却（默认 30 秒 → 设成 0）", cdResp.IsSuccessStatusCode,
+                $"HTTP {(int)cdResp.StatusCode}");
+        }
+
+        using (var cdGet = await http.GetAsync($"http://127.0.0.1:{panelPort}/api/settings", cts.Token))
+        {
+            var cdBody = await cdGet.Content.ReadAsStringAsync(cts.Token);
+            Check("★ 冷却值真的存下来了（面板读到 0）", cdBody.Contains("\"webSearchCooldownSeconds\":0"),
+                cdBody.Contains("webSearchCooldownSeconds") ? cdBody[(cdBody.IndexOf("webSearchCooldownSeconds", StringComparison.Ordinal) - 20)..][..80] : "(没这个字段)");
+        }
+
+        await Task.Delay(300);
+        openAi.ClearRequests();
+        var groundingBefore3 = openAi.GroundingRequests;
+        openAi.EnqueueReply("""{"suitability": 88, "reply": "行，我再查一遍。", "search": "白子的自行车是什么"}""");
+        openAi.EnqueueReply("""{"suitability": 88, "reply": "查到了，就是那辆测试专用自行车。"}""");
+        await protocol.SendPrivateMessageAsync(friendId, "小美", "再查一遍（冷却已设为 0）", 9606, ct: cts.Token);
+        var afterCd = await WaitForRequestAsync(openAi,
+            r => r.Contains("刚查到的资料") && r.Contains("测试专用事实XYZ"), TimeSpan.FromSeconds(60));
+        Check("★ 冷却设成 0 后同一会话立刻能再搜（读的是设置，不是常量）",
+            openAi.GroundingRequests > groundingBefore3 && afterCd is not null,
+            $"grounding {groundingBefore3} → {openAi.GroundingRequests}");
+
+        // ---- 3c) 带着“刚查到的资料”那一轮不受发言适合度门槛限制 ----
+        // 线上症状（号主反馈“有时查完不输出”）：模型回来汇报那一轮自评偏低（它只是回来报答案，
+        // 不是在“插嘴”），被门槛静默掉 → 资料白白浪费，群里只看到“我去查一下”。
+        using (var thResp = await http.PostAsync($"http://127.0.0.1:{panelPort}/api/settings",
+                   new StringContent("""{"suitabilityThreshold":50}""", Encoding.UTF8, "application/json"), cts.Token))
+        {
+            Check("★ 先把发言门槛调到 50（默认 10）", thResp.IsSuccessStatusCode);
+        }
+
+        await Task.Delay(300);
+        openAi.GroundingAnswer = "独特答案：第二个测试事实『门槛测试事实QWE』。";
+        openAi.ClearRequests();
+        var mark4 = protocol.ActionsReceived.Count;
+        openAi.EnqueueReply("""{"suitability": 90, "reply": "我查一下这个。", "search": "查一下门槛测试"}""");
+        openAi.EnqueueReply("""{"suitability": 5, "reply": "查到了：门槛测试事实QWE。"}""");
+        await protocol.SendPrivateMessageAsync(friendId, "小美", "帮我查个东西", 9607, ct: cts.Token);
+        await WaitUntilAsync(
+            () => PrivateSendsSince(protocol, mark4).Any(a => MessageText(a).Contains("门槛测试事实QWE")),
+            TimeSpan.FromSeconds(60));
+        Check("★ 带着资料的那一轮即便自评只有 5 分，也照样把答案说出来（以前会被静默掉）",
+            PrivateSendsSince(protocol, mark4).Any(a => MessageText(a).Contains("门槛测试事实QWE")),
+            string.Join(" | ", PrivateSendsSince(protocol, mark4).Select(MessageText)));
+
+        // 反向：门槛并没被整体废掉 —— 没带资料的普通轮，低分依旧沉默
+        var mark5 = protocol.ActionsReceived.Count;
+        openAi.EnqueueReply("""{"suitability": 5, "reply": "这句我不该说。"}""");
+        await protocol.SendPrivateMessageAsync(friendId, "小美", "随便说点什么", 9608, ct: cts.Token);
+        await Task.Delay(6000);
+        Check("★ 普通轮（没带资料）低于门槛时依旧保持沉默",
+            !PrivateSendsSince(protocol, mark5).Any(a => MessageText(a).Contains("我不该说")),
+            string.Join(" | ", PrivateSendsSince(protocol, mark5).Select(MessageText)));
+
+        // ---- 3d) 资料这一轮没说出来 → 留给下一轮（一次搜索不白费）----
+        openAi.GroundingAnswer = "独特答案：第三个测试事实『留着下轮事实RTY』。";
+        openAi.ClearRequests();
+        var mark6 = protocol.ActionsReceived.Count;
+        openAi.EnqueueReply("""{"suitability": 90, "reply": "我查查。", "search": "第三个测试"}""");
+        openAi.EnqueueReply("""{"suitability": 90}""");
+        await protocol.SendPrivateMessageAsync(friendId, "小美", "那个第三个测试是什么", 9609, ct: cts.Token);
+        await WaitUntilAsync(() => bot.OutputLines.Any(l => l.Contains("查到的资料这次没说出去")),
+            TimeSpan.FromSeconds(60));
+        Check("★ 资料轮模型沉默时不丢资料（日志明说留着下一轮）",
+            bot.OutputLines.Any(l => l.Contains("查到的资料这次没说出去")),
+            string.Join(" | ", bot.OutputLines.Where(l => l.Contains("[Search]")).TakeLast(3)));
+        Check("★ 资料轮真的没发第二条（沉默就是沉默，不把空回复当话发）",
+            PrivateSendsSince(protocol, mark6).Count(a => MessageText(a).Contains("留着下轮事实RTY")) == 0);
+
+        // 下一轮用户再说话：那份资料应该还在提示词里
+        openAi.ClearRequests();
+        openAi.EnqueueReply("""{"suitability": 90, "reply": "哦对，我查过了：留着下轮事实RTY。"}""");
+        await protocol.SendPrivateMessageAsync(friendId, "小美", "查到了吗", 9610, ct: cts.Token);
+        var carried = await WaitForRequestAsync(openAi,
+            r => r.Contains("刚查到的资料") && r.Contains("留着下轮事实RTY"), TimeSpan.FromSeconds(60));
+        Check("★ 下一轮提示词里还带着那份资料（搜一次不会白白浪费）", carried is not null,
+            carried is null ? "(下一轮没有资料)" : "已带回");
+        Check("★ 资料要求“用自己的语气接着说”（结合人设与语境，不许播报腔）",
+            carried is not null && carried.Contains("就像你本来就知道这件事") &&
+            carried.Contains("你的人物设定") && carried.Contains("接着刚才的话头说"),
+            carried is null ? "(没有资料)" : "已要求自然输出");
+        openAi.GroundingAnswer = "《碧蓝档案》里的砂狼白子，日语配音是小仓唯。";
+
         // ---- 4) read：读一个网页的正文（去脚本/标签，只要文字）----
         openAi.ClearRequests();
         openAi.EnqueueReply($$"""{"suitability": 88, "reply": "我看下。", "read": "{{search.PageUrl}}"}""");
