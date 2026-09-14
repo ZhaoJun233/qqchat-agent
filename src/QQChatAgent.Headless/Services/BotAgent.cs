@@ -31,6 +31,9 @@ public sealed class BotAgent : IDisposable
     private readonly ConversationStore _store;
     private readonly MemberProfileStore _profiles;
 
+    /// <summary>群成员身份（群主/管理员/群头衔）。提示词里要用，所以要落库、要能补齐。</summary>
+    private readonly MemberRoleStore _memberRoles;
+
     private readonly object _conversationsGate = new();
     private readonly List<BotConversation> _conversations = new();
 
@@ -216,6 +219,7 @@ public sealed class BotAgent : IDisposable
         _brain = brain;
         _store = store;
         _profiles = profiles;
+        _memberRoles = new MemberRoleStore(EmitLog);
 
         (_whitelist, _whitelistAll) = ParseWhitelist(settings.MessageWhitelist);
         _replyGate = new SemaphoreSlim(Math.Clamp(settings.MaxConcurrentReplies, 1, 16));
@@ -874,6 +878,95 @@ public sealed class BotAgent : IDisposable
         }
     }
 
+    /// <summary>
+    /// 记下一个群成员的身份（消息事件自带 role；自带头衔的协议端就连头衔一起收下），
+    /// 需要补头衔时再后台去问协议端 —— 不能每条消息都问，那会把协议端打爆。
+    /// </summary>
+    private void RememberMemberRole(QqChatMessage msg)
+    {
+        var uid = msg.UserId.ToString();
+        // 事件里带 role（一定有）、可能带 title（看协议端）；titleChecked 只在真拿到 title 时才算 true
+        _memberRoles.Remember(uid, msg.GroupId, msg.SenderRole, msg.SenderTitle, msg.SenderName,
+            titleChecked: !string.IsNullOrWhiteSpace(msg.SenderTitle));
+
+        // 消息事件里没有头衔（OneBot 只保证有 role）—— 缺的话去问一次；问过就把
+        // updated_unix 推后，下次 3 天内不再问（见 MemberRoleStore.FreshFor）。
+        if (!string.IsNullOrWhiteSpace(msg.SenderTitle))
+        {
+            return;
+        }
+
+        if (!_memberRoles.NeedsRefresh(uid, msg.GroupId))
+        {
+            return;
+        }
+
+        // 同一人同一群只排一次（群里连发会疯狂触发）
+        if (!_pendingRoleLookup.TryAdd((msg.GroupId, msg.UserId), Task.CompletedTask))
+        {
+            return;
+        }
+
+        var groupId = msg.GroupId;
+        var userId = msg.UserId;
+        var name = msg.SenderName;
+        var lookup = Task.Run(async () =>
+        {
+            try
+            {
+                var info = await _source.GetGroupMemberInfoAsync(groupId, userId, CancellationToken.None);
+                if (info is not null)
+                {
+                    _memberRoles.Remember(uid, groupId, info.Role, info.Title, info.DisplayName, titleChecked: true);
+                    if (!string.IsNullOrWhiteSpace(info.Title) || info.Role is "owner" or "admin")
+                    {
+                        EmitLog($"[Role] 群 {groupId} 成员 {info.DisplayName}({userId})：" +
+                                $"{info.Role switch { "owner" => "群主", "admin" => "管理员", _ => "成员" }}" +
+                                (string.IsNullOrWhiteSpace(info.Title) ? string.Empty : $"，头衔「{info.Title}」"));
+                    }
+                }
+                else
+                {
+                    // 协议端不支持/没这个人：至少把“问过了”记下来，否则下次发言又要问一遍
+                    _memberRoles.Remember(uid, groupId, msg.SenderRole, null, name, titleChecked: true);
+                }
+            }
+            catch (Exception ex)
+            {
+                EmitLog($"[Role] 查群成员身份失败（不影响聊天）：{ex.Message}");
+            }
+            finally
+            {
+                _pendingRoleLookup.TryRemove((groupId, userId), out _);
+            }
+        });
+
+        // 把真任务放进去（TryAdd 时先占位，避免同一人连发时排队问多次）
+        _pendingRoleLookup[(groupId, userId)] = lookup;
+    }
+
+    /// <summary>
+    /// 正在等人去问协议端身份的 (群, 人) → 那个查询任务。
+    /// 存 Task 而不是个标记：回复前会等它们一下（见 <see cref="WaitForPendingRoleLookupsAsync"/>）——
+    /// 查询通常十几毫秒，等一下就能让“第一次说话那轮”也带着头衔，不必等下一句。
+    /// </summary>
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<(long Group, long UserId), Task> _pendingRoleLookup = new();
+
+    /// <summary>等本群待补身份查完（最多等 timeout，超时就算了，别拖慢回复）。</summary>
+    private async Task WaitForPendingRoleLookupsAsync(long groupId, TimeSpan timeout)
+    {
+        var pending = _pendingRoleLookup
+            .Where(kv => kv.Key.Group == groupId && !kv.Value.IsCompleted)
+            .Select(kv => kv.Value)
+            .ToArray();
+        if (pending.Length == 0)
+        {
+            return;
+        }
+
+        await Task.WhenAny(Task.WhenAll(pending), Task.Delay(timeout));
+    }
+
     // ---------- 入站消息 ----------
 
     private void OnMessageReceived(QqChatMessage msg)
@@ -934,6 +1027,13 @@ public sealed class BotAgent : IDisposable
                 msg.IsGroup ? conversation.Name : null,
                 msg.IsGroup ? msg.GroupId : 0,
                 appended.Seq);
+
+            // 群成员身份（群主/管理员/群头衔）：先记下消息事件里带的 role（零成本），
+            // 缺头衔或太久没更新时再后台去问协议端（ get_group_member_info 才能拿到自定义头衔）。
+            if (msg.IsGroup)
+            {
+                RememberMemberRole(msg);
+            }
         }
 
         EmitLog(
@@ -2098,7 +2198,19 @@ public sealed class BotAgent : IDisposable
                 .ToList();
         }
 
+        // 群成员身份（群主 / 管理员 / 群头衔）：只在“有值得说的人”时才给，不占 token。
+        // 上限 14 人：再多人就只是个名字列表，既没用又费 token。
+        // 先等一下“刚触发的身份查询”：查询就十几毫秒，等它一下，免得第一次说话那轮看不到头衔。
+        if (isGroupScope)
+        {
+            await WaitForPendingRoleLookupsAsync(scopeGroupId, TimeSpan.FromMilliseconds(700));
+        }
+
+        var roleCount = 0;
+        var groupRoles = isGroupScope ? _memberRoles.DescribeForPrompt(scopeGroupId, 14, out roleCount) : null;
+
         EmitLog($"请求模型…（{conversation.Name}，上下文 {context.Count} 条，档案 {profiles.Count} 份/{profileChars} 字" +
+                (roleCount > 0 ? $"，身份 {roleCount} 人" : string.Empty) +
                 (stickerChoices.Count > 0 ? $"，表情包候选 {stickerChoices.Count} 张" : string.Empty) + "）");
 
         // 最近被戳过（10 分钟内）才给模型“可以戳回去”的指令，平时不浪费 token
@@ -2127,7 +2239,6 @@ public sealed class BotAgent : IDisposable
         }
 
         var linkText = _linkNotes.TryRemove(conversation.SourceKey, out var pendingLink) ? pendingLink : null;
-
         CompletionResult result;
         try
         {
@@ -2142,6 +2253,7 @@ public sealed class BotAgent : IDisposable
                 recallText: recallText,
                 enableWebSearch: _settings.EnableWebSearch,
                 searchText: searchText,
+                groupRolesText: groupRoles,
                 enableListen: _settings.EnableMusic,
                 enableVoice: _settings.EnableVoice);
         }

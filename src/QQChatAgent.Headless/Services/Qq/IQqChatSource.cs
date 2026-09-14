@@ -60,6 +60,14 @@ public interface IQqChatSource
     Task<string?> GetGroupNameAsync(long groupId, CancellationToken ct = default);
 
     /// <summary>
+    /// 拉一个群成员的资料（群主/管理员/成员、群头衔、群名片、等级）。
+    /// 为什么要专门问它：群消息事件里只有 role（身份），**群头衔**（自定义头衔）只有这个动作才有。
+    /// 默认实现返回 null —— 不是每个协议端都支持，上层要能优雅降级（降级后至少还有 role）。
+    /// </summary>
+    Task<GroupMemberInfo?> GetGroupMemberInfoAsync(long groupId, long userId, CancellationToken ct = default)
+        => Task.FromResult<GroupMemberInfo?>(null);
+
+    /// <summary>
     /// 拉取登录账号在 QQ 里的“收藏表情”图片地址（协议端支持时）。
     /// 默认实现返回空列表 —— 有的协议端没有这个扩展动作，上层要能优雅降级。
     /// </summary>

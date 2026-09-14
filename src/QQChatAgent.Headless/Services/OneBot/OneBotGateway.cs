@@ -305,6 +305,73 @@ public sealed class OneBotGateway : IQqChatSource, IDisposable
         return result?["data"]?["group_name"]?.GetValue<string>();
     }
 
+    /// <summary>
+    /// 拉群成员资料（身份 + 群头衔）。失败/不支持返回 null。
+    /// no_cache=true：身份与头衔是“刚改就得看到”的东西（刚升管理员），缓存不值。
+    /// </summary>
+    public async Task<GroupMemberInfo?> GetGroupMemberInfoAsync(long groupId, long userId, CancellationToken ct = default)
+    {
+        var result = await SendActionAsync("get_group_member_info",
+            $"{{\"group_id\":{groupId},\"user_id\":{userId},\"no_cache\":true}}", ct);
+        var data = result?["data"];
+        if (data is null)
+        {
+            return null;
+        }
+
+        var uid = ReadLong(data["user_id"]) ?? userId;
+        if (uid == 0)
+        {
+            return null;
+        }
+
+        return new GroupMemberInfo(
+            uid,
+            ReadLong(data["group_id"]) ?? groupId,
+            data["nickname"]?.GetValue<string>(),
+            data["card"]?.GetValue<string>(),
+            data["role"]?.GetValue<string>(),
+            data["title"]?.GetValue<string>(),
+            ReadInt(data["level"]));
+    }
+
+    /// <summary>
+    /// 宽容地读一个数字。
+    /// 为什么需要：协议端对同一字段的类型并不统一 —— NapCat 的 <c>level</c> 是字符串（"1"），
+    /// 直接用 <c>GetValue&lt;int&gt;()</c> 会抛异常，而异常会把**整次查询**废掉（刚踩过：
+    /// 头衔永远拿不到，日志里只有一句 “An element of type 'String' cannot be converted to a 'System.Int32'”）。
+    /// </summary>
+    private static int ReadInt(JsonNode? node)
+    {
+        if (node is not JsonValue value)
+        {
+            return 0;
+        }
+
+        if (value.TryGetValue<int>(out var number))
+        {
+            return number;
+        }
+
+        return value.TryGetValue<string>(out var text) && int.TryParse(text, out var parsed) ? parsed : 0;
+    }
+
+    /// <summary>宽容地读一个 64 位整数（同上：有的实现用字符串发 id）。</summary>
+    private static long? ReadLong(JsonNode? node)
+    {
+        if (node is not JsonValue value)
+        {
+            return null;
+        }
+
+        if (value.TryGetValue<long>(out var number))
+        {
+            return number;
+        }
+
+        return value.TryGetValue<string>(out var text) && long.TryParse(text, out var parsed) ? parsed : null;
+    }
+
     /// <summary>拉取群历史消息（NapCat 扩展动作 get_group_msg_history，返回最新在前的列表）。</summary>
     public async Task<List<QqChatMessage>> GetGroupMsgHistoryAsync(long groupId, int count = 20, CancellationToken ct = default)
     {
@@ -722,7 +789,8 @@ public sealed class OneBotGateway : IQqChatSource, IDisposable
                 UserId = so["user_id"]?.GetValue<long>() ?? userId,
                 Nickname = so["nickname"]?.GetValue<string>(),
                 Card = so["card"]?.GetValue<string>(),
-                Role = so["role"]?.GetValue<string>()
+                Role = so["role"]?.GetValue<string>(),
+                Title = so["title"]?.GetValue<string>()
             }
             : null;
 
@@ -754,7 +822,9 @@ public sealed class OneBotGateway : IQqChatSource, IDisposable
             DateTimeOffset.FromUnixTimeSeconds(time),
             mentioned,
             imageUrls.Count > 0 ? imageUrls : null,
-            musicShares.Count > 0 ? musicShares : null));
+            musicShares.Count > 0 ? musicShares : null,
+            sender?.Role,
+            sender?.Title));
     }
 
     /// <summary>

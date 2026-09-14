@@ -24,7 +24,30 @@ public sealed class OneBotSender
     [JsonPropertyName("user_id")] public long UserId { get; set; }
     [JsonPropertyName("nickname")] public string? Nickname { get; set; }
     [JsonPropertyName("card")] public string? Card { get; set; }
+
+    /// <summary>群身份：owner / admin / member（只有群消息才有）。</summary>
     [JsonPropertyName("role")] public string? Role { get; set; }
+
+    /// <summary>群头衔（自定义头衔）。有的协议端在事件里也带，带了就省一次查询。</summary>
+    [JsonPropertyName("title")] public string? Title { get; set; }
+}
+
+/// <summary>
+/// 群成员资料（OneBot v11 的 get_group_member_info）。
+/// </summary>
+/// <param name="Role">owner / admin / member。</param>
+/// <param name="Title">群头衔（自定义头衔，可能是空的）。</param>
+public sealed record GroupMemberInfo(
+    long UserId,
+    long GroupId,
+    string? Name,
+    string? Card,
+    string? Role,
+    string? Title,
+    int Level = 0)
+{
+    /// <summary>展示名：优先群名片，其次昵称。</summary>
+    public string DisplayName => string.IsNullOrWhiteSpace(Card) ? (Name ?? UserId.ToString()) : Card!;
 }
 
 public sealed class GroupInfo
@@ -45,7 +68,9 @@ public sealed record QqChatMessage(
     DateTimeOffset Time,
     bool MentionedSelf,
     IReadOnlyList<string>? ImageUrls = null,
-    IReadOnlyList<QQChatAgent.Services.Music.MusicShare>? MusicShares = null);
+    IReadOnlyList<QQChatAgent.Services.Music.MusicShare>? MusicShares = null,
+    string? SenderRole = null,
+    string? SenderTitle = null);
 
 /// <summary>
 /// 戳一戳事件（OneBot v11：post_type=notice）。

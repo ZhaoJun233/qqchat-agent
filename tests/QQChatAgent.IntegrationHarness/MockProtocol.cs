@@ -232,6 +232,9 @@ public sealed class MockProtocol : IDisposable
                 "get_login_info" => new JsonObject { ["user_id"] = SelfId, ["nickname"] = "测试机器人" },
                 "get_status" => new JsonObject { ["online"] = AccountOnline, ["good"] = AccountOnline },
                 "get_group_info" => new JsonObject { ["group_id"] = 99999, ["group_name"] = GroupName },
+                // 群成员资料：测“身份识别”用。默认按 Roles 表里登记的 role/title 回；
+                // 没登记的就当普通成员（role=member、无头衔）。
+                "get_group_member_info" => BuildMemberInfo(root["params"] as JsonObject),
                 "get_group_msg_history" => BuildHistory(),
                 "get_forward_msg" => BuildForwardRecord(root["params"]?["id"]?.GetValue<string>()),
                 "send_group_msg" or "send_private_msg" => new JsonObject { ["message_id"] = 555 },
@@ -384,11 +387,48 @@ public sealed class MockProtocol : IDisposable
                 ["user_id"] = userId,
                 ["nickname"] = senderName,
                 ["card"] = senderName,
-                ["role"] = "member"
+                // 角色：默认 member，测试可在 Roles 里把某人登记成 owner/admin。
+                // 这里故意**不带 title** —— OneBot 只保证群消息里有 role，
+                // 头衔得靠 get_group_member_info 去问（这正是要测的补齐逻辑）。
+                ["role"] = RoleOf(groupId, userId)
             }
         };
 
         await SendRawAsync(evt.ToJsonString(), ct);
+    }
+
+    /// <summary>测试用的群成员身份表：(群, 人) → (角色, 头衔)。</summary>
+    public Dictionary<(long GroupId, long UserId), (string Role, string Title)> Roles { get; } = new();
+
+    /// <summary>get_group_member_info 被问了几次（验证“会主动去补头衔”，而不是每条消息都问）。</summary>
+    public int MemberInfoHits => Volatile.Read(ref _memberInfoHits);
+
+    private int _memberInfoHits;
+
+    /// <summary>登记一个人的身份（测试用）：role = owner / admin / member，title 可空。</summary>
+    public void SetRole(long groupId, long userId, string role, string title = "")
+        => Roles[(groupId, userId)] = (role, title);
+
+    private string RoleOf(long groupId, long userId)
+        => Roles.TryGetValue((groupId, userId), out var r) ? r.Role : "member";
+
+    /// <summary>回 get_group_member_info（OneBot v11 形状；群头衔只有这里有）。</summary>
+    private JsonObject BuildMemberInfo(JsonObject? prms)
+    {
+        Interlocked.Increment(ref _memberInfoHits);
+        var groupId = prms?["group_id"]?.GetValue<long>() ?? 0;
+        var userId = prms?["user_id"]?.GetValue<long>() ?? 0;
+        var (role, title) = Roles.TryGetValue((groupId, userId), out var r) ? r : ("member", string.Empty);
+        return new JsonObject
+        {
+            ["group_id"] = groupId,
+            ["user_id"] = userId,
+            ["nickname"] = $"成员{userId}",
+            ["card"] = $"成员{userId}",
+            ["role"] = role,
+            ["title"] = title,
+            ["level"] = "1"
+        };
     }
 
     /// <summary>发送一条“音乐分享”（OneBot 的 music 段，type=163 就是网易云）。</summary>
@@ -434,7 +474,10 @@ public sealed class MockProtocol : IDisposable
                 ["user_id"] = userId,
                 ["nickname"] = senderName,
                 ["card"] = senderName,
-                ["role"] = "member"
+                // 角色：默认 member，测试可在 Roles 里把某人登记成 owner/admin。
+                // 这里故意**不带 title** —— OneBot 只保证群消息里有 role，
+                // 头衔得靠 get_group_member_info 去问（这正是要测的补齐逻辑）。
+                ["role"] = RoleOf(groupId, userId)
             }
         };
 
@@ -476,7 +519,10 @@ public sealed class MockProtocol : IDisposable
                 ["user_id"] = userId,
                 ["nickname"] = senderName,
                 ["card"] = senderName,
-                ["role"] = "member"
+                // 角色：默认 member，测试可在 Roles 里把某人登记成 owner/admin。
+                // 这里故意**不带 title** —— OneBot 只保证群消息里有 role，
+                // 头衔得靠 get_group_member_info 去问（这正是要测的补齐逻辑）。
+                ["role"] = RoleOf(groupId, userId)
             }
         };
 
@@ -598,3 +644,5 @@ public sealed class MockProtocol : IDisposable
         }
     }
 }
+
+    

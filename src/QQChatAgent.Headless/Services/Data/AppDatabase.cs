@@ -293,6 +293,22 @@ public static class AppDatabase
               updated_unix INTEGER NOT NULL DEFAULT 0
             );
 
+            -- 群成员身份：群主 / 管理员 / 成员 + 群头衔。
+            -- 为什么单独一张表：身份是“每条消息都可能变”的小事实（刚升了管理、改了头衔），不值当去动人物档案
+            -- （那份是长期画像）；也不能只放内存 —— 重启后还得知道谁是群主。
+            -- 主键 (uid, group_id)：同一个人在 A 群是管理员、在 B 群只是群友。
+            CREATE TABLE IF NOT EXISTS member_roles(
+              uid           TEXT NOT NULL,
+              group_id      INTEGER NOT NULL,
+              role          TEXT NOT NULL DEFAULT '',
+              title         TEXT NOT NULL DEFAULT '',
+              name          TEXT NOT NULL DEFAULT '',
+              -- 头衔想不想过（0 = 只知道 role，还没问过协议端；1 = 问过了）
+              title_checked INTEGER NOT NULL DEFAULT 0,
+              updated_unix  INTEGER NOT NULL DEFAULT 0,
+              PRIMARY KEY (uid, group_id)
+            );
+
             -- 某个人的发言（按 uid + 群号 + seq）。
             -- ⚠ 主键必须带 group_id：seq 是**会话内**序号，A 群和 B 群的序号会重叠（都是 1、2、3…），
             -- 不带群号就会把另一个群的发言当成冲突丢掉（踩过：S8 里 B 群的档案全是空的）。
@@ -383,8 +399,7 @@ public static class AppDatabase
             Write(conn2 => Exec(conn2, "PRAGMA user_version = 2;"));
         }
 
-        // v3：member_messages 的主键补上 group_id（旧版 A/B 群序号重叠会互相覆盖）
-        if (version < 3)
+        // v3：member_messages 的主键补上 group_id（旧版 A/B 群序号重叠会互相覆盖）        if (version < 3)
         {
             var pkHasGroup = Scalar<long>("""
                 SELECT COUNT(1) FROM pragma_table_info('member_messages') WHERE name = 'group_id' AND pk > 0
@@ -412,6 +427,21 @@ public static class AppDatabase
             }
 
             Write(conn2 => Exec(conn2, "PRAGMA user_version = 3;"));
+        }
+
+        // v4：member_roles 补 title_checked（区分“只知道 role”与“头衔问过了”）。
+        // 新库建表时就有这一列；这里只是兼容“跑过中间版本”的库。
+        if (version < 4)
+        {
+            var hasColumn = Scalar<long>(
+                "SELECT COUNT(1) FROM pragma_table_info('member_roles') WHERE name = 'title_checked'") > 0;
+            if (!hasColumn)
+            {
+                Write(conn2 => Exec(conn2,
+                    "ALTER TABLE member_roles ADD COLUMN title_checked INTEGER NOT NULL DEFAULT 0;"));
+            }
+
+            Write(conn2 => Exec(conn2, "PRAGMA user_version = 4;"));
         }
     }
 }

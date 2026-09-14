@@ -46,7 +46,7 @@ public sealed class OpenAiClient
     /// 网络/接口异常向上抛，由调用方记日志。
     /// </summary>
     public async Task<CompletionResult> CompleteAsync(IReadOnlyList<ChatMessage> context, string? profilesText = null, CancellationToken ct = default,
-        IReadOnlyList<StickerChoice>? stickers = null, bool pokeContext = false, string? moodText = null, string? musicText = null, string? linkText = null, bool enableListen = false, bool enableVoice = false, string? recallText = null, bool enableWebSearch = false, string? searchText = null)
+        IReadOnlyList<StickerChoice>? stickers = null, bool pokeContext = false, string? moodText = null, string? musicText = null, string? linkText = null, bool enableListen = false, bool enableVoice = false, string? recallText = null, bool enableWebSearch = false, string? searchText = null, string? groupRolesText = null)
     {
         if (string.IsNullOrWhiteSpace(_settings.ApiKey))
         {
@@ -157,6 +157,16 @@ public sealed class OpenAiClient
                 "也不要暗示自己看到了 —— 撤回就是不想让它留在群里；" +
                 "② 如果对方撤回后马上又发了更正/补充，就当没这回事，顺着新内容接；" +
                 "③ 只有当大家都在好奇、气氛适合时，才可以轻描淡写问一句，别审问。）";
+        }
+
+        // 群成员身份（群主 / 管理员 / 群头衔）：让模型知道“谁说了算、这人什么来头”
+        if (!string.IsNullOrWhiteSpace(groupRolesText))
+        {
+            systemContent +=
+                "\n\n[本群身份]\n" + groupRolesText.Trim() +
+                "\n（如上：群主与管理员能踢人、能撤回消息，头衔多是本人自己写的梗。" +
+                "这些只是让你心里有数：该配合配合（人家真是管事的），该吐槽吐槽（头衔本身就是个乐子），" +
+                "但不要拿身份拍马屁、也不要拿它压人。）";
         }
 
         // 刚搜到的结果（或读到的网页正文）：交给模型，用完就清
