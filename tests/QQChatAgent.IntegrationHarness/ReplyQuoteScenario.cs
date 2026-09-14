@@ -108,17 +108,20 @@ public static partial class Program
             quotes[0] == msgA, $"引用 id = {quotes[0]}");
 
         // 核心断言：第二次生成触发的是 B，但模型看到的上下文里最新一条别人发的消息是 D。
-        // 旧实现会把引用挂到 B（排队时那个旧触发）→ 线上表现就是“正文聊螺蛳粉、引用挂 11:24 那条”。
+        // 旧实现会把引用挂到 B（排队时那个旧触发）→ 线上表现就是“正文聊螺蛳粉、引用挂 11:24 那条”；
+        // 后来改成“挂上下文里最新那条（D）”—— 仍然是把正文挂到了**另一个人**头上（D 是小李，不是提问的老王），
+        // 群友看到的还是“回复错人”。现在的口径：**触发已经过去就不引用**。
         Check("★ 积压的旧触发不会被当成引用目标",
             quotes.All(q => q != msgB), $"引用 id = {string.Join(", ", quotes.Select(q => q?.ToString() ?? "无"))}");
 
-        Check("★ 第二条回复引用的是模型真正在回的那条（D）",
-            quotes.Count > 1 && quotes[1] == msgD,
-            $"第二条引用 id = {(quotes.Count > 1 ? quotes[1]?.ToString() ?? "无" : "(缺)")}，期望 {msgD}");
+        Check("★ 触发消息已过去时干脆不引用（宁可不引，不把正文挂到别人头上）",
+            quotes.Count > 1 && quotes[1] is null,
+            $"第二条引用 id = {(quotes.Count > 1 ? quotes[1]?.ToString() ?? "无" : "(缺)")}，期望“无”");
 
-        // 顺带兜一层：引用只能是“上下文里最新那条别人发的消息”或空，不能是更早的 A/C
-        Check("引用不会跳到中间那条（C）上",
-            quotes.All(q => q != msgC), $"引用 id = {string.Join(", ", quotes.Select(q => q?.ToString() ?? "无"))}");
+        // 顺带兜一层：不能把正文挂到别人头上（既不能是中间那条 C，也不能是最新的 D）
+        Check("★ 正文不会被挂到别人头上（既不是 C 也不是 D）",
+            quotes.All(q => q != msgC && q != msgD),
+            $"引用 id = {string.Join(", ", quotes.Select(q => q?.ToString() ?? "无"))}");
 
         // ---- 根本解法：让模型自己指认“我在回哪条” ----
         // 启发式只能猜（最新那条 / 排队触发），而模型最清楚自己在接哪个哏：

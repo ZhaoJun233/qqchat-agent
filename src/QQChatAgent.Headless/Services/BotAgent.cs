@@ -2841,8 +2841,9 @@ public sealed class BotAgent : IDisposable
         //      它在 JSON 里用 replyTo 说明“我在回哪条”。这是唯一能从根上对上号的办法 ——
         //      启发式只能猜“最新那条”或“排队时的触发”，都猜不准（线上两度因此看起来回错人）。
         //      采信条件：它必须在本次上下文里（防模型报个不存在的编号）。
-        //   ② 没指认时用启发式：触发消息只有“还是本轮最新诉求”时才能当引用目标 ——
-        //      即它比机器人上一条发言还新；否则用上下文里最后一条别人发的消息。
+        //   ② 没指认时：只有“触发消息还是最新诉求”才拿它当引用目标；如果触发已经过去
+        //      （后面有人插话，比如模型慢了几秒），就**不引用** —— 以前这里会抽“上下文里最新那条
+        //      别人发的消息”当目标，于是“正文回答 A、引用挂到 B”，群里看到的就是“回复错人”。
         //   ③ 紧挨着回就不引用：目标后面没有别的新消息时，引用是多余的（保留原有手感）。
         var messages = conversation.Messages;
         var lastSelfIndex = LastSelfMessageIndex(messages);
@@ -2854,16 +2855,26 @@ public sealed class BotAgent : IDisposable
             // 已撤回的不算：引用一条群里已经看不到的消息，群友看到的就是莫名其妙
             // （实测踩过：模型从历史里拿了一个已被撤回的 id 填 replyTo，BotAgent 这边只校验
             //  “它在不在上下文里”—— 结果是给一条已撤回的消息挂了引用）
-            context.Any(m => m.QqMessageId == chosen && !m.Recalled) &&
+            // 还得是**别人发的**：自己引自己没意义（模型偶尔会把上下文里自己那条的 id 报回来）
+            context.Any(m => m.QqMessageId == chosen && !m.Recalled && m.Role == MessageRole.Peer) &&
             IndexOfMessage(messages, chosen) >= 0)
         {
             replyTo = chosen;
         }
-        else if (triggerMessageId is not null)
+        else if (triggerMessageId is long trig)
         {
-            replyTo = triggerIsCurrent
-                ? triggerMessageId
-                : context.LastOrDefault(m => m.Role == MessageRole.Peer && !m.Recalled && m.QqMessageId is > 0)?.QqMessageId;
+            // 只有“触发消息还是最新诉求”时才拿它当引用目标。
+            // 触发已经过去了（后面有人插话）→ **不引用**：正文是在回答触发者，引用却会挂到
+            // 插话的另一个人头上，QQ 里显示“回复某某”，群友看到就是“回复错人”（号主反馈的 bug）。
+            // 不引用只是少一层上下文，挂错人却是实打实地抢了另一个人的话。
+            if (triggerIsCurrent)
+            {
+                replyTo = trig;
+            }
+            else
+            {
+                EmitLog("不引用（触发消息已经过去了、后面有人插话）—— 宁可不引，也不把正文挂到别人头上");
+            }
         }
 
         // 没有触发消息就**不引用**（戳一戳、主动发言都是这种）。
