@@ -117,6 +117,40 @@ check(
   "写死 2 列 / 1240px 上限时，宽屏右边会空一大块；grid 又会把矮卡片下方留空"
 );
 
+/* ─────────── 1b3) 可读性：不把字堆成一团 ─────────── */
+
+console.log("\n▶ 静态：设置页排版可读性");
+
+check(
+  "★ 字段说明另起一行（不跟标签挤在同一行）",
+  /\.field > label\s*\{[^}]*flex-wrap:\s*wrap/.test(css) &&
+    /\.field > label \.hint\s*\{[^}]*flex:\s*1 1 100%/.test(css),
+  "同一行里中文一换行就成一团，整页看着密密麻麻"
+);
+check("数值徽标（.val）仍留在第一行右侧", /\.field > label \.val\s*\{[^}]*order:\s*1/.test(css));
+check(
+  "★ 开关行的说明也另起一行（否则跟标题连成一句长句）",
+  /\.switch-row > span > \.hint\s*\{[^}]*display:\s*block/.test(css)
+);
+check(
+  "★ 卡片说明默认折成一行、可展开（.fold / .open）",
+  /\.fold\s*\{[^}]*line-clamp:\s*1/.test(css) && /\.fold\.open\s*\{/.test(css) &&
+    js.includes("foldCardNotes") && /classList\.add\("fold"\)/.test(js),
+  "十来张卡片的解释堆在一起就是一面灰墙"
+);
+check(
+  "★ 只有真被截断的说明才加“展开”（短说明不该出现这把标）",
+  /scrollHeight > p\.clientHeight \+ 2/.test(js)
+);
+check(
+  "★ “展开”入口是真元素（不是 ::after）",
+  /\.fold-toggle\s*\{/.test(css) && js.includes('"fold-toggle"') && !/\.fold::after/.test(css),
+  "用伪元素写“展开”会被 line-clamp 一行截断一起裁掉，页面上根本看不到（线上踩过）"
+);
+check("折叠在页面隐藏时不打“已处理”标记（否则打开设置页就再也不折了）",
+  /host\.hidden\)\s*return/.test(js));
+check("卡片头部与控件之间拉了分隔线", /\.card-head\s*\{[^}]*border-bottom/.test(css));
+
 /* ─────────── 1c) 扫码登录入口必须在面板里 ─────────── */
 
 console.log("\n▶ 静态：QQ 未登录时能在面板里直接扫码");

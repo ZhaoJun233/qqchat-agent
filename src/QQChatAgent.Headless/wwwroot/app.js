@@ -810,6 +810,45 @@
      点一下滚过去，滚动时自动高亮当前所在的那节。标题是读 DOM 的 —— 以后加卡片不用改这里。 */
   let refreshSettingsNav = null;
 
+  /*
+   * 卡片里的解释文字默认折成一行，点一下展开。
+   * 为什么：十来张卡片每张都堆三五行说明 —— “第一次看有用、之后全是噪音”，
+   * 而且说明是不动的灰文本，堆在一起整页就是一面灰墙，真正的设置项反而被淹没。
+   * 只有真被截断的才加 .fold（短说明不该出现“展开”字样，点它也没意义）。
+   */
+  function foldCardNotes() {
+    // 页面没显示（display:none）时量出来全是 0，这时既不该折也不该打上“已处理”标记，
+    // 否则等到真打开设置页时就再也不折了（踩过：线上 0/12 张卡片被折）。
+    const host = $("pageSettings");
+    if (!host || host.hidden) return;
+
+    const notes = document.querySelectorAll("#pageSettings .card-head > p, #pageSettings .card > p.path-hint");
+    for (const p of notes) {
+      if (p.dataset.foldReady === "1") continue;
+      p.dataset.foldReady = "1";
+
+      // 先折上再量：没折的时候 scrollHeight 与 clientHeight 都是全文高度，量不出“会不会被截”。
+      // 折成一行后，clientHeight 是一行的真实高度，而 scrollHeight 仍是全文高度 —— 两者一比就知道该不该给“展开”。
+      p.classList.add("fold");
+      if (p.scrollHeight > p.clientHeight + 2) {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "fold-toggle";
+        btn.textContent = "展开";
+        const toggle = () => {
+          const open = p.classList.toggle("open");
+          btn.textContent = open ? "收起" : "展开";
+        };
+        btn.addEventListener("click", toggle);
+        p.addEventListener("click", toggle);
+        p.title = "点一下展开说明";
+        p.insertAdjacentElement("afterend", btn);
+      } else {
+        p.classList.remove("fold");   // 本来就只有一行，不挂多余的东西
+      }
+    }
+  }
+
   function initSettingsNav() {
     const nav = $("settingsNav");
     const scroller = document.querySelector("#pageSettings .settings-scroll");
@@ -872,7 +911,7 @@
       return links[best];
     }
 
-    refreshSettingsNav = () => setActive(currentLink());
+    refreshSettingsNav = () => { setActive(currentLink()); foldCardNotes(); };
 
     // 滚动时高亮（用 rAF 合并：滚动事件一秒能来上百次）
     const raf = window.requestAnimationFrame || ((fn) => setTimeout(fn, 16));
@@ -887,6 +926,9 @@
     }, { passive: true });
 
     setActive(links[0]);
+
+    // 导航建好后顺手折一下说明（要等页面真显示出来、元素有尺寸了才能判断“有没有被截断”）
+    foldCardNotes();
   }
 
   async function loadSettings() {
@@ -1581,6 +1623,7 @@
     bindUi();
     bindAudioSources();
     initSettingsNav();
+    foldCardNotes();
     renderAiMode();
     renderMessages();
     syncMobileView();   // 刷新后回到列表视图，不要停在某个会话上

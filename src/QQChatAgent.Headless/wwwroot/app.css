@@ -631,8 +631,49 @@ textarea { resize: vertical; line-height: 1.5; }
 .card-head h3 { font-size: 17px; font-weight: 600; }
 .card-head p { font-size: 12px; color: var(--text-secondary); margin-top: 2px; line-height: 1.6; }
 
+/* 卡片头部与下面的控件之间拉一道细线：否则标题、说明、第一项控件视觉上糊成一块 */
+.card-head { padding-bottom: 10px; border-bottom: 1px solid var(--divider); }
+
+/* 开关行里的说明也另起一行（不然它跟标题连成一句长句：“优先用模型自带搜索关掉就只用下面的…”） */
+.switch-row > span > .hint { display: block; margin-top: 1px; font-size: 11px; color: var(--text-tertiary); font-weight: 400; }
+
+/*
+ * 可折叠说明：卡片解释与“为什么这么设计”的段落默认只占一行，点“展开”看全部。
+ * 十来张卡片各堆三五行解释，整页看下去就是一面灰墙 —— 但删了又可惜（第一次看有用）。
+ * ⚠ 入口必须是一个**真元素**：用 ::after 写在被 line-clamp 的段落里会被一起裁掉（踩过，
+ * 段落末尾只剩省略号、根本看不到“展开”）。
+ */
+.fold {
+  display: -webkit-box;
+  -webkit-line-clamp: 1;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  cursor: pointer;
+}
+.fold.open { display: block; -webkit-line-clamp: unset; }
+
+.fold-toggle {
+  align-self: flex-start;
+  margin: -6px 0 0;
+  padding: 0;
+  border: none;
+  background: none;
+  font-size: 11px;
+  color: var(--accent);
+  cursor: pointer;
+}
+.fold-toggle:hover { text-decoration: underline; }
+
 .field { display: flex; flex-direction: column; gap: 6px; }
-.field > label { font-size: 12px; color: var(--text-secondary); display: flex; align-items: center; gap: 8px; }
+.field > label {
+  font-size: 12px; color: var(--text-secondary);
+  display: flex; flex-wrap: wrap; align-items: baseline;
+  /* 标签文字与说明同一行时，中文一换行就挤成一团（面板看着“密密麻麻”的主要原因之一）。
+     这里让说明**另起一行**：.hint 占满整行（basis 100%）自然换行，.val（数值徽标）用 order 留在第一行右侧。 */
+  gap: 1px 8px;
+}
+.field > label .hint { order: 2; flex: 1 1 100%; }
+.field > label .val { order: 1; margin-left: auto; }
 .field .hint { color: var(--text-tertiary); font-size: 11px; font-weight: 400; }
 .field .hint code {
   background: var(--subtle-secondary); padding: 0 4px; border-radius: 3px; font-size: 11px;
