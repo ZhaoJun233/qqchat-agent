@@ -1025,6 +1025,12 @@
     $("setMusicNoteTtlDays").value = r.musicNoteTtlDays;
     $("setMusicListenCooldown").value = r.musicListenCooldownSeconds;
     $("setMusicUnderstandModel").value = r.musicUnderstandModel || "";
+
+    // 网易云登录态存在机器人库里：面板一打开就能看出“要不要重扫”
+    // （没改之前它只在自建 API 容器的内存里，容器一重建就白扫了）
+    if (r.neteaseCookieSet === true && $("neteaseLoginState").textContent === "未登录") {
+      $("neteaseLoginState").textContent = "已有登录态（存在机器人库里，重启不丢）";
+    }
     $("setMusicSendAudio").checked = r.musicSendAudioToModel !== false;
     $("audioNeteaseBase").value = r.neteaseBaseUrl || "";
     $("setMusicKeepAudio").checked = r.musicKeepAudio === true;
@@ -1629,10 +1635,13 @@
             else if (code === 801) { qrState("等待扫码…"); }
             else if (code === 802) { qrState("已扫码，请在手机上确认"); }
             else if (code === 803) {
-              qrState("✅ 已登录（VIP 歌也能拿地址了）");
+              // 登录态已存在库里（重启/重建容器都不会掉）——把这件事说清楚，不然下次看到“未登录”又会以为要重扫
+              qrState(s && s.saved === false
+                ? "✅ 已登录（但登录态落盘失败，重启后可能要重扫）"
+                : "✅ 已登录，登录态已保存（重启 / 重建容器都不丢）");
               $("neteaseQr").hidden = true;
               stopQrPolling();
-              toast("网易云登录成功");
+              toast("网易云登录成功（登录态已保存）");
             }
             else if (s && s.error) { qrState("查状态失败：" + s.error); }
           } catch (err) {

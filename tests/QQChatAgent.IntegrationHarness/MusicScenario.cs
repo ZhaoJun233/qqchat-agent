@@ -211,6 +211,122 @@ public static partial class Program
         Check("★ 卡片是网易云（type=163）且带上了搜到的歌曲 id",
             musicCard is not null && musicCard.Contains("163") && musicCard.Contains("999001"),
             musicCard is null ? "(无)" : musicCard.Substring(Math.Max(0, musicCard.Length - 160)));
+
+        // ---- 6) 网易云登录态：扫码成功后必须存在**机器人库里**，并且每个请求都带上 ----
+        // 号主反馈“网易云老是掉登录”：cookie 以前只活在自建 API 容器的进程内存里，
+        // 容器一重建就得重扫；现在存在库里的 secrets 表（面板扫码那条链路写进去）。
+        using (var qrResp = await http.PostAsync($"http://127.0.0.1:{panelPort}/api/netease/qr",
+                   new StringContent("{}", Encoding.UTF8, "application/json"), cts.Token))
+        {
+            var qrBody = await qrResp.Content.ReadAsStringAsync(cts.Token);
+            Check("★ 面板能拿到网易云登录二维码",
+                qrResp.IsSuccessStatusCode && qrBody.Contains("\"ok\":true") && qrBody.Contains("mock-unikey"),
+                qrBody.Length > 160 ? qrBody[..160] : qrBody);
+        }
+
+        using (var ckResp = await http.PostAsync($"http://127.0.0.1:{panelPort}/api/netease/qr/check",
+                   new StringContent("{\"key\":\"mock-unikey\"}", Encoding.UTF8, "application/json"), cts.Token))
+        {
+            var ckBody = await ckResp.Content.ReadAsStringAsync(cts.Token);
+            Check("★ 扫码成功（803）时把登录态存进了库（响应里 saved=true）",
+                ckBody.Contains("803") && ckBody.Contains("\"saved\":true"),
+                ckBody.Length > 200 ? ckBody[..200] : ckBody);
+        }
+
+        var storedCookie = DbProbe.Text(dataDir, "SELECT value FROM secrets WHERE name = 'neteaseCookie'");
+        Check("★ 登录态真的落在库里（secrets 表，不是只在内存）",
+            storedCookie is not null && storedCookie.Contains("MUSIC_U=mock-login-token-abc"),
+            storedCookie is null ? "(库里没这一条)" : $"{storedCookie.Length} 字");
+
+        // 拿到登录态后，后续请求必须真的把它带上（不然 VIP 歌拿不到地址）
+        music.LastCookieReset();
+        using (var mtResp = await http.PostAsync($"http://127.0.0.1:{panelPort}/api/music/test",
+                   new StringContent("{\"song\":\"测试小夜曲 测试歌手\"}", Encoding.UTF8, "application/json"), cts.Token))
+        {
+            await mtResp.Content.ReadAsStringAsync(cts.Token);
+        }
+
+        Check("★ 队列的请求真的带上了登录态（Cookie 头里有 MUSIC_U）",
+            music.LastCookie.Contains("MUSIC_U=mock-login-token-abc"),
+            music.LastCookie.Length > 0 ? music.LastCookie : "(自建接口没收到任何 Cookie)");
+
+        // 关键一步：**重启机器人**（同一份 data 目录）—— 以前这里登录态就没了
+        bot.Dispose();
+        await Task.Delay(500);
+        using var bot2 = StartBot(new Dictionary<string, string>
+        {
+            ["QQCHAT_DATA_DIR"] = dataDir,
+            ["QQCHAT_API_KEY"] = "sk-mock",
+            ["QQCHAT_BASE_URL"] = openAi.BaseUrl,
+            ["QQCHAT_MODEL"] = "mock-model",
+            ["QQCHAT_ONEBOT_PROTOCOL"] = "ReverseWebSocket",
+            ["QQCHAT_ONEBOT_URL"] = $"http://0.0.0.0:{botWsPort}",
+            ["QQCHAT_UIN"] = "10001",
+            ["QQCHAT_WHITELIST"] = groupId.ToString(),
+            ["QQCHAT_IDLE_FALLBACK"] = "0",
+            ["QQCHAT_HEALTH_PORT"] = panelPort.ToString(),
+            ["QQCHAT_NETEASE_BASE_URL"] = music.BaseUrl,
+            ["QQCHAT_MUSIC_SOURCES"] = music.SourceTemplate(songWithAudio),
+            ["QQCHAT_MUSIC_MODEL"] = "mock-audio-model"
+        });
+
+        await WaitForPortAsync(panelPort, cts.Token, bot2);
+        await Task.Delay(1000);
+
+        using (var stResp = await http.GetAsync($"http://127.0.0.1:{panelPort}/api/settings", cts.Token))
+        {
+            var stBody = await stResp.Content.ReadAsStringAsync(cts.Token);
+            Check("★ 重启后面板仍认为“登录态已设置”", stBody.Contains("\"neteaseCookieSet\":true"),
+                stBody.Contains("neteaseCookieSet") ? Snippet(stBody, "neteaseCookieSet") : "(没这个字段)");
+        }
+
+        music.LastCookieReset();
+        using (var mt2 = await http.PostAsync($"http://127.0.0.1:{panelPort}/api/music/test",
+                   new StringContent("{\"song\":\"测试小夜曲 测试歌手\"}", Encoding.UTF8, "application/json"), cts.Token))
+        {
+            await mt2.Content.ReadAsStringAsync(cts.Token);
+        }
+
+        Check("★ 重启后照样带登录态发请求（这就是“不再老是掉登录”的那一刀）",
+            music.LastCookie.Contains("MUSIC_U=mock-login-token-abc"),
+            music.LastCookie.Length > 0 ? music.LastCookie : "(自建接口没收到任何 Cookie)");
+        bot2.Dispose();
+
+        // ---- 7) 没扫码（库里没登录态）时仍然认环境变量 QQCHAT_NETEASE_COOKIE ----
+        // 优先级：面板扫码存的 > 环境变量（与 API Key 同一套规矩），这条钉住“老部署不会因为这次改动而变差”。
+        var envDir = NewDataDir("s22-env");
+        using var bot3 = StartBot(new Dictionary<string, string>
+        {
+            ["QQCHAT_DATA_DIR"] = envDir,
+            ["QQCHAT_API_KEY"] = "sk-mock",
+            ["QQCHAT_BASE_URL"] = openAi.BaseUrl,
+            ["QQCHAT_MODEL"] = "mock-model",
+            ["QQCHAT_ONEBOT_PROTOCOL"] = "ReverseWebSocket",
+            // 端口要跟其它场景错开：13035/18099 是 S23（LinksScenario）的，抄了它们会把 S23 撞死（踩过）
+            ["QQCHAT_ONEBOT_URL"] = "http://0.0.0.0:13140",
+            ["QQCHAT_UIN"] = "10001",
+            ["QQCHAT_WHITELIST"] = groupId.ToString(),
+            ["QQCHAT_IDLE_FALLBACK"] = "0",
+            ["QQCHAT_HEALTH_PORT"] = "18140",
+            ["QQCHAT_NETEASE_BASE_URL"] = music.BaseUrl,
+            ["QQCHAT_MUSIC_SOURCES"] = music.SourceTemplate(songWithAudio),
+            ["QQCHAT_MUSIC_MODEL"] = "mock-audio-model",
+            ["QQCHAT_NETEASE_COOKIE"] = "MUSIC_U=from-env-cookie; __csrf=envcsrf"
+        });
+
+        await WaitForPortAsync(18140, cts.Token, bot3);
+        await Task.Delay(800);
+        music.LastCookieReset();
+        using (var mt3 = await http.PostAsync("http://127.0.0.1:18140/api/music/test",
+                   new StringContent("{\"song\":\"测试小夜曲 测试歌手\"}", Encoding.UTF8, "application/json"), cts.Token))
+        {
+            await mt3.Content.ReadAsStringAsync(cts.Token);
+        }
+
+        Check("★ 没扫码时依旧用环境变量里的登录态（老部署不受影响）",
+            music.LastCookie.Contains("MUSIC_U=from-env-cookie"),
+            music.LastCookie.Length > 0 ? music.LastCookie : "(自建接口没收到任何 Cookie)");
+        bot3.Dispose();
     }
 
     /// <summary>取“从第 mark 条动作之后”的群消息（把“本步新发出的”与历史分开）。</summary>

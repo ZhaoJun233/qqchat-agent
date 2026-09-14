@@ -227,6 +227,16 @@ public static class BotConfig
         SecretsStore.Init(AppPaths.RuntimeRoot);
         s.ApiKeyOverride ??= SecretsStore.LoadApiKey();
 
+        // 网易云登录态：面板扫码存下来的优先于环境变量（以前只活在自建 API 容器内存里，容器一重建就没了）
+        if (SecretsStore.LoadNeteaseCookie() is { Length: > 0 } storedCookie)
+        {
+            s.NeteaseCookie = storedCookie;
+            if (!string.IsNullOrWhiteSpace(Str("QQCHAT_NETEASE_COOKIE")))
+            {
+                PanelOverriddenEnvVars.Add("QQCHAT_NETEASE_COOKIE → 面板里扫码保存的登录态");
+            }
+        }
+
         if (!string.IsNullOrWhiteSpace(s.ModelBaseUrlOverride))
         {
             if (!string.IsNullOrWhiteSpace(Str("QQCHAT_BASE_URL", "OPENAI_BASE_URL")))

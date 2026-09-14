@@ -51,6 +51,25 @@ public sealed class MockMusicHost : IDisposable
     /// <summary>音频被下载次数。</summary>
     public int AudioHits => Volatile.Read(ref _audioHits);
 
+    /// <summary>
+    /// 最近一次请求带的 Cookie（带 cookie 的请求才记）。
+    /// 用来钉“网易云登录态真的被带上了”——不然 VIP 歌拿不到地址，而这正是线上老毛病的一半。
+    /// </summary>
+    public string LastCookie => _lastCookie;
+
+    private volatile string _lastCookie = string.Empty;
+
+    /// <summary>扫码接口被访问次数。</summary>
+    public int QrHits => Volatile.Read(ref _qrHits);
+
+    private int _qrHits;
+
+    /// <summary>扫码成功后上游给的登录态（存进机器人库里的就是它）。</summary>
+    public const string QrCookie = "MUSIC_U=mock-login-token-abc; __csrf=mockcsrf";
+
+    /// <summary>清掉记录的 Cookie（下一步验证“这次请求到底带没带”）。</summary>
+    public void LastCookieReset() => _lastCookie = string.Empty;
+
     public string BaseUrl => $"http://127.0.0.1:{_port}";
 
     /// <summary>音源模板（音源名 | 模板），形如 mock|http://.../audio/{id}.mp3。</summary>
@@ -96,7 +115,32 @@ public sealed class MockMusicHost : IDisposable
             byte[] body;
             string contentType;
 
-            if (path.StartsWith("/api/song/detail", StringComparison.Ordinal) || path.StartsWith("/song/detail", StringComparison.Ordinal))
+            if (ctx.Request.Headers["Cookie"] is { Length: > 0 } seenCookie)
+            {
+                _lastCookie = seenCookie;
+            }
+
+            // 扫码登录三连：key → create → check（check 直接回 803 = 扫成功，并给 cookie）
+            if (path.StartsWith("/login/qr/", StringComparison.Ordinal))
+            {
+                Interlocked.Increment(ref _qrHits);
+                if (path.StartsWith("/login/qr/key", StringComparison.Ordinal))
+                {
+                    body = Encoding.UTF8.GetBytes("{\"code\":200,\"data\":{\"unikey\":\"mock-unikey\"}}");
+                }
+                else if (path.StartsWith("/login/qr/create", StringComparison.Ordinal))
+                {
+                    body = Encoding.UTF8.GetBytes("{\"code\":200,\"qrimg\":\"data:image/png;base64,TU9DS1FS\"}");
+                }
+                else
+                {
+                    body = Encoding.UTF8.GetBytes(
+                        "{\"code\":803,\"cookie\":\"" + QrCookie.Replace("\"", "") + "\"}");
+                }
+
+                contentType = "application/json";
+            }
+            else if (path.StartsWith("/api/song/detail", StringComparison.Ordinal) || path.StartsWith("/song/detail", StringComparison.Ordinal))
             {
                 Interlocked.Increment(ref _apiHits);
                 body = Encoding.UTF8.GetBytes(

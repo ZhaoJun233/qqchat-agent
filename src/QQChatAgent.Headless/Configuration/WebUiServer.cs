@@ -1273,8 +1273,42 @@ public sealed class WebUiServer : IDisposable
                 }
 
                 var check = await GetJsonFromAsync($"{baseUrl}/login/qr/check?key={Uri.EscapeDataString(key)}&timestamp={stamp}");
+
+                // 扫码成功（803）时把登录态存下来：上游会在这条响应里给 cookie。
+                // 为什么必须存：cookie 本来只活在自建 API 容器的进程内存里 ——
+                // 容器一重建（升级镜像 / compose up 重创）就得重新扫码，号主反馈的“老是掉登录”就是这个。
+                // 存进库（secrets 表，权限 600）之后，每轮请求直接带 cookie（见 NeteaseMusicClient），
+                // 与那个容器活着不活着无关；重启机器人也不会丢。
+                if (TryReadInt(check?["code"]) == 803 &&
+                    check?["cookie"] is JsonValue cookieValue && cookieValue.TryGetValue<string>(out var freshCookie) &&
+                    !string.IsNullOrWhiteSpace(freshCookie))
+                {
+                    var saved = SecretsStore.SaveNeteaseCookie(freshCookie);
+                    _settings.NeteaseCookie = freshCookie;   // 立即生效（音乐客户端每轮现读）
+                    check["saved"] = saved;
+                    FileLog.Write("Music", saved
+                        ? $"网易云扫码登录成功，登录态已存进库里（{freshCookie.Length} 字，重启/重建容器都不丢）"
+                        : "网易云扫码登录成功，但登录态落盘失败（仍会用在本次进程内）");
+                }
+
                 await WriteJsonAsync(context, 200, check ?? new JsonObject { ["error"] = "上游无响应" });
                 return;
+            }
+
+            /// <summary>宽容地读一个整数（上游有时给字符串 "803"，不确定就别让它把整条链路弄挂）。</summary>
+            static int? TryReadInt(JsonNode? node)
+            {
+                if (node is not JsonValue value)
+                {
+                    return null;
+                }
+
+                if (value.TryGetValue<int>(out var number))
+                {
+                    return number;
+                }
+
+                return value.TryGetValue<string>(out var text) && int.TryParse(text, out var parsed) ? parsed : null;
             }
 
             // 两步：先拿 key，再让上游生成二维码（qrimg=true 直接回 base64 图）
