@@ -310,6 +310,23 @@
           </label>
 
           <label class="switch-row">
+            <input type="checkbox" id="setEnableProactive" />
+            <span class="switch"></span>
+            <span>允许主动开口（陪伴感）<span class="hint">没人 @ 它、也没人问它时，如果群里安静下来、而且有人情绪低落或刚聊得热闹，
+              它可能自己接一句。同一会话至少隔下面这个时间，而且上一条不能是它自己说的</span></span>
+          </label>
+
+          <div class="field">
+            <label>主动开口的最小间隔（秒）<span class="hint">默认 1800（半小时一句）；太短会显得坐不住</span></label>
+            <input type="number" id="setProactiveCooldown" min="60" max="86400" step="60" />
+          </div>
+
+          <div class="field">
+            <label>群里安静多久才算安静（秒）<span class="hint">默认 120；没安静下来就不主动插话</span></label>
+            <input type="number" id="setProactiveQuiet" min="1" max="3600" step="10" />
+          </div>
+
+          <label class="switch-row">
             <input type="checkbox" id="setIgnoreBrackets" />
             <span class="switch"></span>
             <span>忽略群友消息里的括号旁白<span class="hint">如「（笑）」「（bushi）」；也包含前后带的动作旁白：

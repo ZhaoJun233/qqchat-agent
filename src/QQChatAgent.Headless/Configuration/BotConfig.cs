@@ -80,6 +80,9 @@ public static class BotConfig
             [nameof(AppSettings.GroupCooldownSeconds)] = new[] { "QQCHAT_GROUP_COOLDOWN" },
             [nameof(AppSettings.IdleFallbackSeconds)] = new[] { "QQCHAT_IDLE_FALLBACK" },
             [nameof(AppSettings.SplitReplies)] = new[] { "QQCHAT_SPLIT_REPLIES" },
+      [nameof(AppSettings.EnableProactive)] = new[] { "QQCHAT_PROACTIVE" },
+      [nameof(AppSettings.ProactiveCooldownSeconds)] = new[] { "QQCHAT_PROACTIVE_COOLDOWN" },
+      [nameof(AppSettings.ProactiveQuietSeconds)] = new[] { "QQCHAT_PROACTIVE_QUIET" },
       [nameof(AppSettings.IgnoreBracketMessages)] = new[] { "QQCHAT_IGNORE_BRACKETS" },
             [nameof(AppSettings.SegmentDelayMs)] = new[] { "QQCHAT_SEGMENT_DELAY_MS" },
             [nameof(AppSettings.MaxContextMessages)] = new[] { "QQCHAT_MAX_CONTEXT" },
@@ -167,6 +170,9 @@ public static class BotConfig
         s.GroupCooldownSeconds = Int("QQCHAT_GROUP_COOLDOWN") ?? s.GroupCooldownSeconds;
         s.IdleFallbackSeconds = Int("QQCHAT_IDLE_FALLBACK") ?? s.IdleFallbackSeconds;
         s.SplitReplies = Bool("QQCHAT_SPLIT_REPLIES") ?? s.SplitReplies;
+        s.EnableProactive = Bool("QQCHAT_PROACTIVE") ?? s.EnableProactive;
+        s.ProactiveCooldownSeconds = Int("QQCHAT_PROACTIVE_COOLDOWN") ?? s.ProactiveCooldownSeconds;
+        s.ProactiveQuietSeconds = Int("QQCHAT_PROACTIVE_QUIET") ?? s.ProactiveQuietSeconds;
         s.IgnoreBracketMessages = Bool("QQCHAT_IGNORE_BRACKETS") ?? s.IgnoreBracketMessages;
         s.SegmentDelayMs = Int("QQCHAT_SEGMENT_DELAY_MS") ?? s.SegmentDelayMs;
         s.MaxContextMessages = Int("QQCHAT_MAX_CONTEXT") ?? s.MaxContextMessages;

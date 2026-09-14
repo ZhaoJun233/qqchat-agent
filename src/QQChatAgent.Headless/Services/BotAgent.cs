@@ -84,13 +84,25 @@ public sealed class BotAgent : IDisposable
     // 待回复队列：**每个会话一条 FIFO 链**。
     // 要点：同一会话的请求必须严格按触发顺序执行（否则回复会错位、引用判定会错），
     //       而不同会话之间可以并发，互不阻塞。
-    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, System.Collections.Concurrent.ConcurrentQueue<long?>> _pendingReplies = new();
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, System.Collections.Concurrent.ConcurrentQueue<PendingReply>> _pendingReplies = new();
     private readonly System.Collections.Concurrent.ConcurrentDictionary<string, BotConversation> _pendingConversations = new();
     private readonly System.Collections.Concurrent.ConcurrentDictionary<string, byte> _inFlight = new();
     private SemaphoreSlim _replyGate;
     private int _replyWorkerRunning;
     private volatile int _replyGatePermits;
     private long _lastActiveRequestTicks = DateTime.MinValue.Ticks; // 最近一次主动请求时间（原子读写）
+
+    /// <summary>
+    /// 每个会话最近一次“读到的气氛”：模型自己写的 vibe + 一句人话，下一轮当底色用（有 TTL）。
+    /// 为什么存内存而不是落库：气氛是分钟级的东西，重启后重读一遍上下文就行，不值得占库。
+    /// </summary>
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, (string Vibe, string Note, DateTimeOffset At)> _vibes = new();
+
+    /// <summary>气氛的保留时长：超过就当“上一轮”已经过去，不再影响提示词。</summary>
+    private static readonly TimeSpan VibeTtl = TimeSpan.FromMinutes(45);
+
+    /// <summary>每个会话最近一次“自己主动开口”的时间（用于主动发言的冷却）。</summary>
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, DateTimeOffset> _lastProactive = new();
 
     /// <summary>当前在途的模型请求数（可观测）。</summary>
     public int InFlightReplies => _inFlight.Count;
@@ -226,7 +238,8 @@ public sealed class BotAgent : IDisposable
         _replyGatePermits = Math.Clamp(settings.MaxConcurrentReplies, 1, 16);
     }
 
-    /// <summary>待回复的一条请求（会话 + 触发消息）。</summary>
+    /// <summary>待回复队列元素：触发消息 id（null = 没有触发）+ 这是不是“自己主动开口”。</summary>
+    private readonly record struct PendingReply(long? TriggerMessageId, bool Proactive);
     /// <summary>日志节流：同一来源的“忽略”类日志最多每分钟一条（否则忙群里会刷爆）。</summary>
     private readonly System.Collections.Concurrent.ConcurrentDictionary<string, long> _noisyLogAt = new();
 
@@ -966,6 +979,65 @@ public sealed class BotAgent : IDisposable
 
         await Task.WhenAny(Task.WhenAll(pending), Task.Delay(timeout));
     }
+
+    /// <summary>
+    /// 按“读到的气氛”调门槛。返回本轮真正生效的阈值，reason 给日志用。
+    /// 为什么在代码里再调一道（而不是只写在提示词里）：模型自评本来就依赖它的判断，
+    /// 但它说“群里在吵架”时还想插一句的情况真出现过 —— 这时候代码得拦一下。
+    /// </summary>
+    private static int VibeAdjustedThreshold(string vibe, int baseThreshold, out string reason)
+    {
+        switch (vibe)
+        {
+            case "吵架":
+                reason = "气氛在对线，不插嘴（除非非说不可）";
+                return Math.Max(baseThreshold, 60);
+            case "低落":
+            case "求助":
+                reason = "有人情绪不好/在求助，轻轻接一句比沉默好";
+                return Math.Max(0, baseThreshold - 10);
+            case "生气":
+                reason = "有人在气头上，说话得稳一点";
+                return baseThreshold;
+            default:
+                reason = string.Empty;
+                return baseThreshold;
+        }
+    }
+
+    /// <summary>记下这一轮读到的气氛（下一轮当底色用；没有 vibe 就不记）。</summary>
+    private void RememberVibe(string sourceKey, string? vibe, string? note)
+    {
+        if (string.IsNullOrWhiteSpace(vibe) || vibe == "中性")
+        {
+            _vibes.TryRemove(sourceKey, out _);
+            return;
+        }
+
+        _vibes[sourceKey] = (vibe, (note ?? string.Empty).Trim(), DateTimeOffset.Now);
+    }
+
+    /// <summary>当前还记得的气氛（过期/没记返回空串）。</summary>
+    private string CurrentVibe(string sourceKey)
+        => _vibes.TryGetValue(sourceKey, out var v) && DateTimeOffset.Now - v.At <= VibeTtl ? v.Vibe : string.Empty;
+
+    /// <summary>给模型的“上一轮感觉”（带一句人话），没有就返回 null。</summary>
+    private string? CurrentVibeHint(string sourceKey)
+    {
+        if (!_vibes.TryGetValue(sourceKey, out var v) || DateTimeOffset.Now - v.At > VibeTtl)
+        {
+            return null;
+        }
+
+        return v.Note.Length > 0 ? $"{v.Vibe}：{v.Note}" : v.Vibe;
+    }
+
+    /// <summary>
+    /// 气氛“沉”的时候不发图/不发表情/不戳人：人家在难过或者在对线，
+    /// 机器人丢个表情包过去看着就像在笑。（语音也不算合适，一句就够，别弄得很热闹）
+    /// </summary>
+    private bool IsSoberVibe(string sourceKey)
+        => CurrentVibe(sourceKey) is "低落" or "求助" or "吵架" or "生气" or "吐槽";
 
     // ---------- 入站消息 ----------
 
@@ -2087,7 +2159,7 @@ public sealed class BotAgent : IDisposable
     }
 
     /// <summary>把一条待回复请求排入该会话的 FIFO 链，并唤醒调度器。</summary>
-    private void EnqueueReply(BotConversation conversation, long? triggerMessageId)
+    private void EnqueueReply(BotConversation conversation, long? triggerMessageId, bool proactive = false)
     {
         if (triggerMessageId is not null)
         {
@@ -2096,8 +2168,8 @@ public sealed class BotAgent : IDisposable
 
         _pendingConversations[conversation.SourceKey] = conversation;
         _pendingReplies
-            .GetOrAdd(conversation.SourceKey, _ => new System.Collections.Concurrent.ConcurrentQueue<long?>())
-            .Enqueue(triggerMessageId);
+            .GetOrAdd(conversation.SourceKey, _ => new System.Collections.Concurrent.ConcurrentQueue<PendingReply>())
+            .Enqueue(new PendingReply(triggerMessageId, proactive));
 
         _ = DrainReplyQueueAsync();
     }
@@ -2128,7 +2200,7 @@ public sealed class BotAgent : IDisposable
                         continue; // 该会话已在跑 → 保持顺序，等它完成
                     }
 
-                    if (queue.IsEmpty || !queue.TryDequeue(out var trigger))
+                    if (queue.IsEmpty || !queue.TryDequeue(out var pending))
                     {
                         continue;
                     }
@@ -2137,7 +2209,7 @@ public sealed class BotAgent : IDisposable
                     {
                         // 并发抢占失败：把触发消息放回队首位置（重新入队到尾部也可，
                         // 因为同一会话此时必定无其它待处理项）
-                        queue.Enqueue(trigger);
+                        queue.Enqueue(pending);
                         continue;
                     }
 
@@ -2148,7 +2220,7 @@ public sealed class BotAgent : IDisposable
                     }
 
                     fired = true;
-                    _ = RunReplyAsync(conversation, key, trigger);
+                    _ = RunReplyAsync(conversation, key, pending.TriggerMessageId, pending.Proactive);
                 }
 
                 if (fired)
@@ -2269,7 +2341,7 @@ public sealed class BotAgent : IDisposable
     }
 
     /// <summary>执行一次回复（受全局并发闸门限制）。</summary>
-    private async Task RunReplyAsync(BotConversation conversation, string sourceKey, long? triggerMessageId)
+    private async Task RunReplyAsync(BotConversation conversation, string sourceKey, long? triggerMessageId, bool proactive = false)
     {
         // 捕获当前闸门实例：配置变更会整体替换 _replyGate，
         // Wait 与 Release 必须作用在**同一个对象**上。
@@ -2280,7 +2352,7 @@ public sealed class BotAgent : IDisposable
             await gate.WaitAsync();
             acquired = true;
             conversation.HasPendingReply = false;
-            await GenerateReplyAsync(conversation, triggerMessageId);
+            await GenerateReplyAsync(conversation, triggerMessageId, proactive);
         }
         catch (Exception ex)
         {
@@ -2332,9 +2404,97 @@ public sealed class BotAgent : IDisposable
             EmitLog($"静默兜底触发: {conversation.Name}");
             EnqueueReply(conversation, null);
         }
+
+        TryProactiveSpeak();
     }
 
-    private async Task GenerateReplyAsync(BotConversation conversation, long? triggerMessageId)
+    /// <summary>主动开口前，群里需要安静多久（秒）。太短会显得坐不住。</summary>
+    private const int ProactiveQuietDefaultSeconds = 120;
+
+    /// <summary>“有人在住的话题”的判据：最近 5 分钟内至少这么多条群友发言。</summary>
+    private const int ProactiveBurstMessages = 3;
+
+    /// <summary>
+    /// 主动开口：没有人 @ 它、也没人在问它的时候，它自己接一句。
+    ///
+    /// 为什么要它：号主要的是“陪伴感” —— 只在被叫时才出声，本质是个应答机器。
+    /// 什么情况才允许主动（宁可少也不能烦人）：
+    ///   • 群聊 + AI 开着 + 白名单内 + 没在冷却；
+    ///   • 群里已经安静下来（≥ <see cref="AppSettings.ProactiveQuietSeconds" /> 秒没人说话）—— 不然就是抢话；
+    ///   • 机器人上一条不是最最后一条（上一条是它说的，就不要再自说自话）；
+    ///   • 同一会话距上次主动 ≥ ProactiveCooldownSeconds；
+    ///   • 而且得有个“由头”：要么它上一轮读到有人情绪低落/在求助，要么群里刚刚聊得热（≥ 3 条/5 分钟）—— 接一句话题。
+    /// 不满足就什么都不做（不出声也是陪伴）。
+    /// </summary>
+    private void TryProactiveSpeak()
+    {
+        if (!_settings.EnableProactive)
+        {
+            return;
+        }
+
+        var cooldown = TimeSpan.FromSeconds(Math.Max(60, _settings.ProactiveCooldownSeconds));
+        var now = DateTimeOffset.Now;
+        var quiet = TimeSpan.FromSeconds(Math.Max(1, _settings.ProactiveQuietSeconds));
+
+        foreach (var conversation in Conversations)
+        {
+            if (conversation.Kind != ConversationKind.GroupChat || conversation.HasPendingReply)
+            {
+                continue;
+            }
+
+            if (_inFlight.ContainsKey(conversation.SourceKey))
+            {
+                continue;
+            }
+
+            if (!IsWhitelistedKey(conversation.SourceKey) || !AllowReply(conversation))
+            {
+                continue;
+            }
+
+            if (_lastProactive.TryGetValue(conversation.SourceKey, out var lastAt) && now - lastAt < cooldown)
+            {
+                continue;
+            }
+
+            var messages = conversation.Messages;
+            if (messages.Count == 0)
+            {
+                continue;
+            }
+
+            var last = messages[^1];
+            var lastAt2 = last.Timestamp;
+            if (now - lastAt2 < quiet)
+            {
+                continue;   // 群里刚刚还在说，别抢
+            }
+
+            if (last.Role == MessageRole.Self)
+            {
+                continue;   // 最后一句是它自己说的 → 不再自说自话
+            }
+
+            // “由头”：情绪低落/求助那边可以主动关心；热闹话题可以接着聊
+            var vibe = CurrentVibe(conversation.SourceKey);
+            var caringMoment = vibe is "低落" or "求助";
+            var burst = messages.Count(m => m.Role == MessageRole.Peer && now - m.Timestamp <= TimeSpan.FromMinutes(5)) >= ProactiveBurstMessages;
+            if (!caringMoment && !burst)
+            {
+                continue;
+            }
+
+            _lastProactive[conversation.SourceKey] = now;
+            EmitLog($"[主动] {conversation.Name}：安静 {(now - lastAt2).TotalMinutes:F0} 分钟" +
+                    (caringMoment ? $"、上轮气氛「{vibe}」" : "、刚聊得热") + " → 自己开一句");
+            EnqueueReply(conversation, null, proactive: true);
+            return;   // 一次 tick 只主动一个会话（避免同时到处说话）
+        }
+    }
+
+    private async Task GenerateReplyAsync(BotConversation conversation, long? triggerMessageId, bool proactive = false)
     {
         var context = conversation.TakeLast(_settings.MaxContextMessages);
         if (context.Count == 0)
@@ -2386,8 +2546,10 @@ public sealed class BotAgent : IDisposable
 
         // 表情包候选：拿最近的对话文字当检索词，从库里挑几张给模型选。
         // 先挑后发 —— 库可能有上千张，全塞进提示词既贵又不准。
+        // 气氛“沉”（有人低落/在吵架）时不给候选：给了它就容易挑一张发出去，与气氛不搭。
         var stickerChoices = new List<StickerChoice>();
-        if (_settings.EnableStickers && _settings.StickerLibraryMax > 0 && _settings.StickerCandidates > 0)
+        if (_settings.EnableStickers && _settings.StickerLibraryMax > 0 && _settings.StickerCandidates > 0 &&
+            !IsSoberVibe(conversation.SourceKey))
         {
             var query = string.Join(" ", context.TakeLast(8).Select(m => m.Text));
             stickerChoices = _stickers
@@ -2407,8 +2569,14 @@ public sealed class BotAgent : IDisposable
         var roleCount = 0;
         var groupRoles = isGroupScope ? _memberRoles.DescribeForPrompt(scopeGroupId, 14, out roleCount) : null;
 
+        // 上一次读到的气氛（有 TTL）：给模型当底色，让它接得上
+        var vibeHint = CurrentVibeHint(conversation.SourceKey);
+        var previousVibe = CurrentVibe(conversation.SourceKey);
+
         EmitLog($"请求模型…（{conversation.Name}，上下文 {context.Count} 条，档案 {profiles.Count} 份/{profileChars} 字" +
                 (roleCount > 0 ? $"，身份 {roleCount} 人" : string.Empty) +
+                (previousVibe.Length > 0 ? $"，上轮气氛 {previousVibe}" : string.Empty) +
+                (proactive ? "，主动开口" : string.Empty) +
                 (stickerChoices.Count > 0 ? $"，表情包候选 {stickerChoices.Count} 张" : string.Empty) + "）");
 
         // 最近被戳过（10 分钟内）才给模型“可以戳回去”的指令，平时不浪费 token
@@ -2452,13 +2620,19 @@ public sealed class BotAgent : IDisposable
                 enableWebSearch: _settings.EnableWebSearch,
                 searchText: searchText,
                 groupRolesText: groupRoles,
+                vibeHint: vibeHint,
+                proactive: proactive,
                 enableListen: _settings.EnableMusic,
                 enableVoice: _settings.EnableVoice);
         }
         catch (Exception ex)
         {
             SetThinking(conversation, false);
-            EmitLog($"模型请求失败: {ex.Message}");
+            // 连异常类型和第一帧调用堆栈一起记：只记 Message 时，“空引用”这种根本看不出在哪（踩过）
+            EmitLog($"模型请求失败: {ex.GetType().Name} {ex.Message}" +
+                    (ex.StackTrace is { Length: > 0 } stack
+                        ? "　@ " + stack.Split('\n').FirstOrDefault(l => l.Contains("QQChatAgent"))?.Trim()
+                        : string.Empty));
             KeepSearchNotes(conversation, searchText, "模型请求失败");
             return;
         }
@@ -2471,12 +2645,33 @@ public sealed class BotAgent : IDisposable
         // 例外：**这一轮带着刚查到的资料**时不受门槛限制 —— 模型自评“现在插嘴合适吗”时
         // 往往给低分（它只是回来汇报查到的东西，不是要插话），结果就是“查了半天啥也不说”。
         // 查都查了，就得让它说出来；真不想说（空回复）时下面会把资料留给下一轮。
-        var threshold = Math.Clamp(_settings.SuitabilityThreshold, 0, 100);
+        // 发言适合度门槛：以前只写在提示词里、代码不执行；现在真正生效。
+        // 模型未按 JSON 输出（Suitability == null）时按普通文本回复处理，不拦截。
+        //
+        // 情绪介入（这一步才是“人性化陪伴”的关键）：先看它读到的气氛，再决定门槛 ——
+        //   • 吵架/对线：不插嘴（门槛抬到 60，即“非说不可”才说）
+        //   • 低落/求助/孤独：更愿意轻声接一句（门槛降 10），但禁掉表情包/语音/戳（人家难过时发图很尬）
+        //   • 生气/吐槽：照常，但也不发表情包（容易像在嘲笑）
+        var vibe = result.Vibe ?? "中性";
+        var baseThreshold = Math.Clamp(_settings.SuitabilityThreshold, 0, 100);
+        var threshold = VibeAdjustedThreshold(vibe, baseThreshold, out var vibeReason);
+        var soberMood = vibe is "低落" or "求助" or "吵架" or "生气" or "吐槽";
+
+        if (vibe != "中性" && result.VibeNote is { Length: > 0 })
+        {
+            EmitLog($"[Vibe] {conversation.Name}：读到「{vibe}」——{result.VibeNote}" +
+                    (vibeReason.Length > 0 ? $"（{vibeReason}）" : string.Empty));
+        }
+
+        // 不管这轮说不说话，读到的气氛都记下来：沉默也是一种回应，下一轮要接得上
+        RememberVibe(conversation.SourceKey, vibe, result.VibeNote);
+
         if (result.Suitability is int score && score < threshold)
         {
             if (searchText is null)
             {
-                EmitLog($"适合度不足 → 沉默（评分 {score} < 阈值 {threshold}，{elapsed:F0}ms）: {conversation.Name}");
+                EmitLog($"适合度不足 → 沉默（评分 {score} < 阈值 {threshold}" +
+                        (vibe != "中性" ? $"，气氛 {vibe}" : string.Empty) + $"，{elapsed:F0}ms）: {conversation.Name}");
                 return;
             }
 
@@ -2585,7 +2780,7 @@ public sealed class BotAgent : IDisposable
             });
         }
 
-        if (_settings.EnableStickers && result.StickerId is { } sid)
+        if (_settings.EnableStickers && result.StickerId is { } sid && !IsSoberVibe(conversation.SourceKey))
         {
             sticker = _stickers.Find(sid);
             if (sticker is null)
@@ -2698,6 +2893,10 @@ public sealed class BotAgent : IDisposable
             if (!_settings.EnableVoice || _voice is null)
             {
                 voiceSkipWhy = "语音消息开关是关的";
+            }
+            else if (IsSoberVibe(conversation.SourceKey))
+            {
+                voiceSkipWhy = "气氛比较沉（有人低落/在吵架），这句用文字说就够了";
             }
             else if (voiceText.Length > maxChars)
             {

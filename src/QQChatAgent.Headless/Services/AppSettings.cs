@@ -87,6 +87,22 @@ public sealed class AppSettings
     public bool SplitReplies { get; set; } = true;
 
     /// <summary>
+    /// 主动开口（陪伴感）：群里安静下来、又有人情绪低落或者刚聊得热闹时，它可能自己开一句。
+    /// 不是“定时发广告”：还受同会话冷却（<see cref="ProactiveCooldownSeconds" />）、
+    /// “最后一条不是自己说的”、“群聊限定”等多道限制，没由头就不出声。
+    /// </summary>
+    public bool EnableProactive { get; set; } = true;
+
+    /// <summary>同一会话两次主动开口的最小间隔（秒），防自说自话；默认半小时一句。</summary>
+    public int ProactiveCooldownSeconds { get; set; } = 1800;
+
+    /// <summary>
+    /// 群里要安静多久才算“安静下来”（秒）：没到这个时长就不主动插话（否则就是抢话）。
+    /// 默认 120；测试/自己调折腾时可以调小。
+    /// </summary>
+    public int ProactiveQuietSeconds { get; set; } = 120;
+
+    /// <summary>
     /// 忽略“只有括号”的群消息（如“（笑）”“（bushi）”“( 跑 )”）。
     /// 为什么要这个开关：群里这类旁白很多，它们不针对任何人、也没什么信息，
     /// 却会占上下文并可能把机器人拉出来接话（“（笑）”接什么？）。

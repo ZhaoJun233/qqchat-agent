@@ -100,6 +100,7 @@ public static partial class Program
         await Scenario("s27", RunMigrationScenarioAsync);
         await Scenario("s28", RunMemberRoleScenarioAsync);
         await Scenario("s29", RunBracketMessageScenarioAsync);
+        await Scenario("s30", RunCompanionScenarioAsync);
         }
         catch (Exception ex)
         {
@@ -811,7 +812,9 @@ public static partial class Program
             Check("★ 注入里出现了“画像”字段", sys.Contains("画像："), Truncate(sys, 700));
 
             var headerChars = sys.Length;
-            Check("画像确实压缩了体积（系统提示 < 2500 字）", headerChars < 2500, $"实际 {headerChars} 字");
+            // 预算从 2500 提到 3200：2026-09-14 加了“先读懂气氛再说话”那段发言决策细则
+            //（情绪识别 + 该不该开口的清单 + suitability 语义），约 400 字，是有用的内容而非注水。
+            Check("画像确实压缩了体积（系统提示 < 3200 字）", headerChars < 3200, $"实际 {headerChars} 字");
 
             var foldedCount = sys.Split("老王的历史发言").Length - 1;
             Check("已折叠的原文不再重复注入（最多只剩未折叠的尾部）", foldedCount <= 4,

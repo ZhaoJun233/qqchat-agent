@@ -540,6 +540,9 @@ public sealed class WebUiServer : IDisposable
             if (body["privateCooldownSeconds"] is JsonNode pc) s.PrivateCooldownSeconds = Math.Max(0, pc.GetValue<int>());
             if (body["idleFallbackSeconds"] is JsonNode fb) s.IdleFallbackSeconds = Math.Max(0, fb.GetValue<int>());
             if (body["splitReplies"] is JsonNode sp) s.SplitReplies = sp.GetValue<bool>();
+            if (body["enableProactive"] is JsonNode pv) s.EnableProactive = pv.GetValue<bool>();
+            if (body["proactiveCooldownSeconds"] is JsonNode pcd) s.ProactiveCooldownSeconds = Math.Clamp(pcd.GetValue<int>(), 60, 86400);
+            if (body["proactiveQuietSeconds"] is JsonNode pq) s.ProactiveQuietSeconds = Math.Clamp(pq.GetValue<int>(), 1, 3600);
             if (body["ignoreBracketMessages"] is JsonNode ibm) s.IgnoreBracketMessages = ibm.GetValue<bool>();
             if (body["segmentDelayMs"] is JsonNode sd) s.SegmentDelayMs = Math.Max(0, sd.GetValue<int>());
             if (body["maxContextMessages"] is JsonNode mc) s.MaxContextMessages = Math.Clamp(mc.GetValue<int>(), 10, 1000);
@@ -924,6 +927,9 @@ public sealed class WebUiServer : IDisposable
                 ["privateCooldownSeconds"] = s.PrivateCooldownSeconds,
                 ["idleFallbackSeconds"] = s.IdleFallbackSeconds,
                 ["splitReplies"] = s.SplitReplies,
+                ["enableProactive"] = s.EnableProactive,
+                ["proactiveCooldownSeconds"] = s.ProactiveCooldownSeconds,
+                ["proactiveQuietSeconds"] = s.ProactiveQuietSeconds,
                 ["ignoreBracketMessages"] = s.IgnoreBracketMessages,
                 ["segmentDelayMs"] = s.SegmentDelayMs,
                 ["maxContextMessages"] = s.MaxContextMessages,

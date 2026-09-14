@@ -1006,6 +1006,9 @@
     $("setSummaryChars").value = r.profileSummaryMaxChars;
     $("setSummaryInterval").value = r.profileSummaryIntervalSeconds;
     $("setSplitReplies").checked = r.splitReplies;
+    $("setEnableProactive").checked = r.enableProactive !== false;
+    $("setProactiveCooldown").value = r.proactiveCooldownSeconds;
+    $("setProactiveQuiet").value = r.proactiveQuietSeconds;
     $("setIgnoreBrackets").checked = r.ignoreBracketMessages === true;
     $("setEnableStickers").checked = r.enableStickers;
     $("setStickerMax").value = r.stickerLibraryMax;
@@ -1091,6 +1094,9 @@
       privateCooldownSeconds: Number($("setPrivateCooldown").value),
       idleFallbackSeconds: Number($("setIdleFallback").value),
       splitReplies: $("setSplitReplies").checked,
+      enableProactive: $("setEnableProactive").checked,
+      proactiveCooldownSeconds: Number($("setProactiveCooldown").value),
+      proactiveQuietSeconds: Number($("setProactiveQuiet").value),
       ignoreBracketMessages: $("setIgnoreBrackets").checked,
       segmentDelayMs: Number($("setSegmentDelay").value),
       maxContextMessages: Number($("setMaxContext").value),

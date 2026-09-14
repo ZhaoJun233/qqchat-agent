@@ -46,7 +46,7 @@ public sealed class OpenAiClient
     /// 网络/接口异常向上抛，由调用方记日志。
     /// </summary>
     public async Task<CompletionResult> CompleteAsync(IReadOnlyList<ChatMessage> context, string? profilesText = null, CancellationToken ct = default,
-        IReadOnlyList<StickerChoice>? stickers = null, bool pokeContext = false, string? moodText = null, string? musicText = null, string? linkText = null, bool enableListen = false, bool enableVoice = false, string? recallText = null, bool enableWebSearch = false, string? searchText = null, string? groupRolesText = null)
+        IReadOnlyList<StickerChoice>? stickers = null, bool pokeContext = false, string? moodText = null, string? musicText = null, string? linkText = null, bool enableListen = false, bool enableVoice = false, string? recallText = null, bool enableWebSearch = false, string? searchText = null, string? groupRolesText = null, string? vibeHint = null, bool proactive = false)
     {
         if (string.IsNullOrWhiteSpace(_settings.ApiKey))
         {
@@ -167,6 +167,27 @@ public sealed class OpenAiClient
                 "\n（如上：群主与管理员能踢人、能撤回消息，头衔多是本人自己写的梗。" +
                 "这些只是让你心里有数：该配合配合（人家真是管事的），该吐槽吐槽（头衔本身就是个乐子），" +
                 "但不要拿身份拍马屁、也不要拿它压人。）";
+        }
+
+        // 主动开口：这次不是别人问它，是它自己想说话 —— 不说明的话，模型会以为有人在跟它说话
+        if (proactive)
+        {
+            systemContent +=
+                "\n\n[这次是你自己想说话]\n" +
+                "没有人 @ 你、也没人在问你 —— 是刚刚沉默了一会儿，你自己想说一句。规矩：\n" +
+                "• 先看看上下文里大家最后在聊什么/什么气氛：接着那个气氛说，别突然换个话题；\n" +
+                "• 不要用“在吗”“有人在吗”“大家好啊”这类找存在感的废话开头；\n" +
+                "• 不要连环发问、不要查户口（“你们多大”“在干什么”之类）；\n" +
+                "• 可以接住某个人的情绪（安慰/捧场）、可以补一句你自己的想法、也可以把一个话题往前推一句；\n" +
+                "• 如果实在没什么可说的，就沉默（reply 空）—— 为了刷存在感而说话比不说话更烦人。";
+        }
+
+        // 上一轮自己读到的气氛：让语气接得上（像个人一样，记得刚才大家什么心情）
+        if (!string.IsNullOrWhiteSpace(vibeHint))
+        {
+            systemContent +=
+                "\n\n[你上一条消息时的感觉]\n" + vibeHint.Trim() +
+                "\n（只是你自己的记忆，别把它读出来；如果现在气氛已经变了，以现在为准。）";
         }
 
         // 刚搜到的结果（或读到的网页正文）：交给模型，用完就清
@@ -443,6 +464,23 @@ public sealed class OpenAiClient
                 reply = r.GetString()?.Trim();
             }
 
+            // 群里的情绪氛围（模型自己的读法）：归一到一个固定集合，程序侧才能按它调发言策略
+            string? vibe = null;
+            if (root.TryGetProperty("vibe", out var vb) && vb.ValueKind == JsonValueKind.String)
+            {
+                vibe = NormalizeVibe(vb.GetString());
+            }
+
+            string? vibeNote = null;
+            if (root.TryGetProperty("vibeNote", out var vn) && vn.ValueKind == JsonValueKind.String)
+            {
+                vibeNote = Truncate((vn.GetString() ?? string.Empty).Trim(), 40);
+                if (vibeNote.Length == 0)
+                {
+                    vibeNote = null;
+                }
+            }
+
             // 单字回复：中文口语里“嗯/哦/哈”确实是正常应答，其余单字基本都是上游噪声——
             // 群里实测就是单个“彫”在刷屏（上游偶发只回一个字符）。
             if (reply is { Length: 1 } && !SingleCharReplyWhitelist.Contains(reply[0]))
@@ -589,7 +627,7 @@ public sealed class OpenAiClient
                 mood = md.GetString()?.Trim();
             }
 
-            return new CompletionResult(suitability, string.IsNullOrWhiteSpace(reply) ? null : reply, rawReply, stickerId, replyToId, pokeTargetId, mood, listen, shareSong, speak, search, read);
+            return new CompletionResult(suitability, string.IsNullOrWhiteSpace(reply) ? null : reply, rawReply, stickerId, replyToId, pokeTargetId, mood, listen, shareSong, speak, search, read, vibe, vibeNote);
         }
         catch (JsonException)
         {
@@ -1017,11 +1055,24 @@ public sealed class OpenAiClient
             _ => "你极少主动发言：仅在被明确 @ 或对方直接对你说话时回复。"
         };
 
-        return "\n\n[发言决策]\n" +
-               "收到一条新消息后，结合上述上下文与人设判断：本轮是否应该由你发言。" +
-               "先评估“发言适合度”（0-100 的整数，衡量这条消息是否值得你回应、你是否能自然接上话），" +
-               "然后写出你的回复。请严格只输出一行 JSON，形如：{\"suitability\": 80, \"reply\": \"你的回复内容\"}。" +
-               "" + desire +
+        // 这份提示词是“像个人”的核心：先说清怎么读情绪（读得准，话才接得住），
+        // 再说清什么情况该闭嘴（陪伴的分寸感全在这里），最后才是 JSON 格式。
+        return "\n\n[先读懂气氛再说话]\n" +
+               "每轮先在心里回答两个问题，再决定说不说话：\n" +
+               "① **群里现在是什么情绪？** 逐条看最近几条：开心/兴奋、吐槽/抱怨、低落/难过、求助/求助无回应、生气/拌嘴、吵架/对线、" +
+               "普通闲聊、或是别人之间的私事。把它写在 vibe 里（一个词），vibeNote 里补一句人话（≤30 字，例：“在吐槽加班，情绪烦燥”）。\n" +
+               "② **这时候我该不该开口？** 参考：\n" +
+               "   • 有人**倾诉 / 失落 / 求安慰** → 先接住情绪（“咋了”“谁惹你了”），**别讲道理、别给方案、别开黄腔、别发表情包**；\n" +
+               "   • 有人在**吐槽一件事** → 可以顺一句共情或一起吐，但别挑拨、别把是非扩大；\n" +
+               "   • 有人**吵架 / 对线** → 不站队、不评理、不接话（除非被点名要你说话）；\n" +
+               "   • 大家在**开玩笑 / 起哄** → 可以接梗、可以带表情包，但别把玩笑开在别人痛处上；\n" +
+               "   • 只是**别人之间的闲聊**、与你无关 → 沉默（不出声也是一种陪伴）；\n" +
+               "   • 直接 @ 你、问你事 → 必答，而且先回答、别绕；\n" +
+               "   • 你刚说完、没新人接话 → 别再自说自话。\n" +
+               "suitability 就是这个“该不该开口”的分数（0-100：0-10 完全不该插嘴；10-40 可以但不必要；40-70 自然接话；70+ 就是非说不可）。\n" +
+               "宁愿少说、说准，也别为了存在感硬接一句废话。\n" +
+               desire + "\n" +
+               "请严格只输出一行 JSON，形如：{\"suitability\": 80, \"vibe\": \"吐槽\", \"vibeNote\": \"在吐槽加班\", \"reply\": \"你的回复内容\"}。" +
                " 如果你决定发言（suitability 不低于 " + SuitabilityThreshold + "），reply 必须填写实际内容；" +
                "如果你决定沉默，reply 填空字符串（\"\"）。" +
                "注意：只要 reply 非空，程序就会把你的话发出去——所以不确定时宁可不发，reply 留空。";
@@ -1257,6 +1308,56 @@ public sealed class OpenAiClient
 
     private static string Truncate(string s, int max) => s.Length <= max ? s : s[..max] + "…";
 
+    /// <summary>
+    /// 把模型写的“情绪词”归一到一个固定集合：程序侧要根据它调发言策略（阈值/表情包/语音），
+    /// 所以不能让模型自由发挥（它会写出“有点不开心又不想说话”这种句子）。
+    /// 认不出来的一律当“中性”（策略上等于不变），宁可不干预。
+    /// </summary>
+    internal static string NormalizeVibe(string? raw)
+    {
+        var text = (raw ?? string.Empty).Trim();
+        if (text.Length == 0)
+        {
+            return "中性";
+        }
+
+        // 顺序有讲究：先识别“冲突”（最需要于预的），再低落/求助/生气，最后正向
+        if (VibeHit(text, "吵架", "对线", "冲突", "互喷", "抬杠", "阴阳"))
+        {
+            return "吵架";
+        }
+
+        if (VibeHit(text, "低落", "难过", "伤心", "失落", "孤独", "寂寞", "崩溃", "委屈", "焦虑", "压力", "丧"))
+        {
+            return "低落";
+        }
+
+        if (VibeHit(text, "求助", "求解", "请教", "求助无回应"))
+        {
+            return "求助";
+        }
+
+        if (VibeHit(text, "生气", "愤怒", "不满", "恼", "烦"))
+        {
+            return "生气";
+        }
+
+        if (VibeHit(text, "吐槽", "抱怨", "牢骚", "疑惑"))
+        {
+            return "吐槽";
+        }
+
+        if (VibeHit(text, "开心", "高兴", "兴奋", "欢乐", "起哄", "玩笑", "笑"))
+        {
+            return "开心";
+        }
+
+        return "中性";
+    }
+
+    private static bool VibeHit(string text, params string[] words)
+        => words.Any(w => text.Contains(w, StringComparison.Ordinal));
+
     /// <summary>撤回标记：内容是保留的，但必须让模型一眼看出“这条已经收回去了”。</summary>
     private const string RecallMark = "[已撤回] ";
 
@@ -1297,7 +1398,9 @@ public readonly record struct StickerChoice(string Id, string Description);
 /// <param name="Speak">模型想“用语音说”的句子（机器人合成语音发出去）；null = 不发语音。</param>
 /// <param name="Search">模型想上网查的问题（机器人真去搜，下一轮把结果给它）；null = 不搜。</param>
 /// <param name="Read">模型想读的网页地址（机器人抓正文，下一轮把正文给它）；null = 不读。</param>
-public readonly record struct CompletionResult(int? Suitability, string? Reply, string? RawText, string? StickerId = null, long? ReplyToMessageId = null, long? PokeTargetId = null, string? Mood = null, string? Listen = null, string? ShareSong = null, string? Speak = null, string? Search = null, string? Read = null);
+/// <param name="Vibe">它读到的**群里的情绪氛围**（开心/吐槽/低落/求助/生气/吵架/中性…）；null = 没说。</param>
+/// <param name="VibeNote">给上一行补一句人话（例：“在吐槽加班，情绪烦燥”），会交给下一轮的自己；null = 没写。</param>
+public readonly record struct CompletionResult(int? Suitability, string? Reply, string? RawText, string? StickerId = null, long? ReplyToMessageId = null, long? PokeTargetId = null, string? Mood = null, string? Listen = null, string? ShareSong = null, string? Speak = null, string? Search = null, string? Read = null, string? Vibe = null, string? VibeNote = null);
 
 /// <summary>图片下载器：把图片 URL 下载并转成 base64 data URL（供多模态模型识图），
 /// 也给表情包库提供原始字节。</summary>
