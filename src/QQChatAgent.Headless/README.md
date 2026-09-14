@@ -50,7 +50,8 @@ curl -s http://127.0.0.1:8080/status       # 运行状态详情
 
 ## 环境变量
 
-配置要么写进 `settings.json`（见下），要么用环境变量覆盖 —— **环境变量优先**。
+配置要么在**面板里改**（存进 `data/qqchat.db`，见下），要么用环境变量提供 —— **首次启动时**环境变量当作种子写入；
+之后面板里改过的项就以面板为准（再改环境变量不再生效，机器人启动日志里会列出来提醒）。
 带 `_FILE` 后缀的变量从文件读取内容，适合 Docker secrets：
 
 ```yaml
@@ -65,7 +66,7 @@ secrets:
 
 | 变量 | 默认 | 说明 |
 | --- | --- | --- |
-| `QQCHAT_API_KEY` / `OPENAI_API_KEY` | — | **必填**。也支持 `QQCHAT_API_KEY_FILE` ；面板里也能填（存 `data/secrets.json`，权限 600，不进 settings.json）；面板填过之后以面板为准 |
+| `QQCHAT_API_KEY` / `OPENAI_API_KEY` | — | **必填**。也支持 `QQCHAT_API_KEY_FILE` ；面板里也能填（存库里的 `secrets` 表，库文件权限 600）；面板填过之后以面板为准 |
 | `QQCHAT_BASE_URL` / `OPENAI_BASE_URL` | `https://api.openai.com/v1` | 接口地址（DeepSeek / 通义 / Ollama / 中转…）；面板「Agent 大脑」里可改，改完立即生效；面板改过之后环境变量不再覆盖它 |
 | `QQCHAT_MODEL` / `OPENAI_MODEL` | `gpt-4o-mini` | 模型名；面板里可改 |
 | `QQCHAT_MAX_TOKENS` | `2048` | 单次回复上限 |

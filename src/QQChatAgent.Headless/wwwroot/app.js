@@ -805,6 +805,90 @@
     if (h) h.hidden = true;
   }
 
+  /* ── 设置页分节导航 ──
+     卡片一多，“找个设置项”就得滑上滑下。这里按每张卡片的 h3 生成一排跳转胶囊：
+     点一下滚过去，滚动时自动高亮当前所在的那节。标题是读 DOM 的 —— 以后加卡片不用改这里。 */
+  let refreshSettingsNav = null;
+
+  function initSettingsNav() {
+    const nav = $("settingsNav");
+    const scroller = document.querySelector("#pageSettings .settings-scroll");
+    const inner = scroller && scroller.querySelector(".settings-inner");
+    if (!nav || !scroller || !inner || nav.dataset.ready === "1") return;
+
+    const cards = Array.from(inner.querySelectorAll(":scope > .card"));
+    if (cards.length < 2) return;   // 只有一两张卡片就不必导航了
+    nav.dataset.ready = "1";
+
+    function titleOf(card, i) {
+      const h3 = card.querySelector("h3");
+      if (!h3) return `第 ${i + 1} 节`;
+      // h3 里常跟一个 <span class="hint">（例如“运行日志 · 最近 200 条”）—— 导航只要主标题
+      const nodes = h3.childNodes ? Array.from(h3.childNodes) : [h3];
+      const text = nodes
+        .filter((n) => !(n.nodeType === 1 && n.classList && n.classList.contains("hint")))
+        .map((n) => n.textContent || "")
+        .join("")
+        .replace(/\s+/g, " ")
+        .trim();
+      return text || `第 ${i + 1} 节`;
+    }
+
+    const links = cards.map((card, i) => {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "section-link";
+      btn.textContent = titleOf(card, i);
+      btn.title = btn.textContent;
+      btn.addEventListener("click", () => {
+        setActive(btn);
+        card.scrollIntoView({ behavior: "smooth", block: "start" });
+      });
+      nav.appendChild(btn);
+      return btn;
+    });
+
+    function setActive(active) {
+      links.forEach((b) => b.classList.toggle("active", b === active));
+      // 手机上这排胶囊是横向滑动的：把当前项带进可视区域，否则高亮了也看不见
+      if (active && typeof active.scrollIntoView === "function") {
+        active.scrollIntoView({ block: "nearest", inline: "nearest" });
+      }
+    }
+
+    // “当前在哪一节” = **可视区里那个顶部最靠近视口顶部的卡片**。
+    // 不用“最后一个越过顶部的卡片”那种算法：多列流里卡片是“填满一列再开下一列”，
+    // DOM 顺序与视觉顺序不完全一致，滚到下一列的顶部时高亮会莫名其妙跳回去。
+    function currentLink() {
+      const box = scroller.getBoundingClientRect();
+      let best = 0;
+      let bestDist = Infinity;
+      cards.forEach((card, i) => {
+        const r = card.getBoundingClientRect();
+        if (r.bottom < box.top + 8 || r.top > box.bottom - 8) return;   // 没在可视区里
+        const dist = Math.abs(r.top - (box.top + 8));
+        if (dist < bestDist) { bestDist = dist; best = i; }
+      });
+      return links[best];
+    }
+
+    refreshSettingsNav = () => setActive(currentLink());
+
+    // 滚动时高亮（用 rAF 合并：滚动事件一秒能来上百次）
+    const raf = window.requestAnimationFrame || ((fn) => setTimeout(fn, 16));
+    let scheduled = false;
+    scroller.addEventListener("scroll", () => {
+      if (scheduled) return;
+      scheduled = true;
+      raf(() => {
+        scheduled = false;
+        setActive(currentLink());
+      });
+    }, { passive: true });
+
+    setActive(links[0]);
+  }
+
   async function loadSettings() {
     state.settingsLoaded = false; // 重新加载期间先封住保存
     const data = await api("/api/settings");
@@ -1106,7 +1190,11 @@
     $("pageChat").hidden = page !== "chat";
     $("pageSettings").hidden = page !== "settings";
 
-    if (page === "settings") loadSettings().catch((e) => toast("加载设置失败：" + e.message));
+    if (page === "settings") {
+      loadSettings().catch((e) => toast("加载设置失败：" + e.message));
+      // 页面刚显示出来时元素才有尺寸，分节导航的高亮要等这一刻才能算准
+      if (refreshSettingsNav) setTimeout(refreshSettingsNav, 0);
+    }
     if (page === "chat" && needsLogin()) pollLogin(false);
     if (page === "settings") {
       // 去设置页就把聊天视图收起来：回来时看到的是列表，而不是停在某个会话上
@@ -1492,6 +1580,7 @@
   async function boot() {
     bindUi();
     bindAudioSources();
+    initSettingsNav();
     renderAiMode();
     renderMessages();
     syncMobileView();   // 刷新后回到列表视图，不要停在某个会话上

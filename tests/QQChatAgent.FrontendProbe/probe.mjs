@@ -87,6 +87,36 @@ check(
   /\.settings-scroll\s*\{[^}]*overflow-y:\s*auto/.test(css) && /\.settings-scroll\s*\{[^}]*min-height:\s*0/.test(css)
 );
 
+/* ─────────── 1b2) 分节导航（卡片一多就得滑半天） ─────────── */
+
+console.log("\n▶ 静态：设置页分节导航");
+
+const navMatch = html.match(/<nav class="section-nav" id="settingsNav"[^>]*>\s*<\/nav>/);
+check("设置页有分节导航容器 #settingsNav", navMatch !== null);
+check(
+  "★ 导航在滚动区外面（内容是斜着滚的，它不能跟着跑）",
+  html.indexOf('id="settingsNav"') > 0 &&
+    html.indexOf('id="settingsNav"') < html.indexOf('class="settings-scroll"'),
+  "它得是 #pageSettings 的直子元素，排在 .settings-scroll 前面"
+);
+check(
+  "CSS：导航常驻不缩放 + 窄屏可横向滑（手机上 10 个胶囊放不下）",
+  /\.section-nav\s*\{[^}]*flex:\s*0 0 auto/.test(css) && /\.section-nav\s*\{[^}]*overflow-x:\s*auto/.test(css)
+);
+check("CSS：胶囊有 hover 与 active 态（高亮当前所在的那一节）",
+  /\.section-link:hover/.test(css) && /\.section-link\.active/.test(css));
+check(
+  "★ JS：胶囊从卡片标题生成（不维护第二份硬编码列表）",
+  js.includes('initSettingsNav') && js.includes('"settingsNav"') && /querySelector\("h3"\)/.test(js),
+  "加一张卡片就得同步改一遍导航列表的话，早晚会对不上"
+);
+check("JS：boot() 里真的调用了", /initSettingsNav\(\);/.test(js));
+check(
+  "★ 宽屏不留大片空白：设置页多列排布按窗口宽度自动铺",
+  /columns:\s*420px/.test(css) && /break-inside:\s*avoid/.test(css),
+  "写死 2 列 / 1240px 上限时，宽屏右边会空一大块；grid 又会把矮卡片下方留空"
+);
+
 /* ─────────── 1c) 扫码登录入口必须在面板里 ─────────── */
 
 console.log("\n▶ 静态：QQ 未登录时能在面板里直接扫码");

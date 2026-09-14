@@ -39,14 +39,14 @@ docker compose logs -f napcat       # 首次扫码登录（或在机器人面板
 
 **运维**
 
-- **Web 面板**：聊天记录与会话管理、设置、实时日志、手机端适配；**面板内扫码登录**（账号未登录时直接显示二维码，不必再找 NapCat 自己的入口）
-- **模型接口面板可改**：Base URL / 模型名 / API Key 在设置页改完立即生效，不用改 `.env` 重启；密钥单独存 `data/secrets.json`（权限 600），不进 `settings.json`，界面只回显掩码
+- **Web 面板**：聊天记录与会话管理、设置、实时日志、手机端适配；**设置页带分节导航**（顶部一排胶囊，点一下跳到对应卡片，滚动时自动高亮；卡片按窗口宽度多列铺满，不在宽屏上留大片空白）；**面板内扫码登录**（账号未登录时直接显示二维码，不必再找 NapCat 自己的入口）
+- **模型接口面板可改**：Base URL / 模型名 / API Key 在设置页改完立即生效，不用改 `.env` 重启；密钥单独存 `data/qqchat.db` 的 `secrets` 表（库权限 600），不跟其余配置混在一起，界面只回显掩码
 - **可观测**：`/healthz` `/readyz` `/status` + 容器 `HEALTHCHECK`；QQ 掉线会主动提示（仅凭 WebSocket 连着判断不了登录失效）
 - **数据存 SQLite**：会话/消息/人物档案/画像/心情/听过的歌/表情包索引/密钥全部在一个 `data/qqchat.db` 里（WAL）。
   好处：一次崩溃不会“会话写了、档案没写”（同库同事务）；消息是追加型数据，不再每次全量重写 JSON；
   面板要的“某群更早的发言 / 某人某群的画像 / 归档里翻旧账”都是一句 SQL。
   老版本的 JSON 会在首次启动时**自动导入**并移到 `legacy-json/` 留档（不删）
-- **配置分层**：环境变量负责部署（协议端地址、token、挂载目录），`settings.json` 负责行为（人设、白名单、冷却、阈值…），面板是行为的唯一所有者
+- **配置分层**：环境变量负责部署（协议端地址、token、挂载目录），面板负责行为（人设、白名单、冷却、阈值…），面板是行为的唯一所有者（存在 `data/qqchat.db` 里）
 
 ## 🏗️ 架构
 
@@ -58,7 +58,7 @@ NapCat 容器 ── OneBot v11 正向 WS ──┐
                       本服务（QQChatAgent.Headless）
                        ├── OneBot 网关（消息/动作/事件）
                        ├── Agent（提示词组装、模型调用、发言决策）
-                       ├── 人物档案 / 会话持久化（JSON）
+                       ├── 人物档案 / 会话持久化（单个 SQLite 库 qqchat.db）
                        └── Web 面板 + 健康检查（极简 HttpListener，不引入 ASP.NET）
                                     │
                                     ▼
@@ -71,7 +71,7 @@ NapCat 容器 ── OneBot v11 正向 WS ──┐
 | AI 大脑 | OpenAI 兼容 Chat Completions（含多模态识图） |
 | 持久化 | `/data/qqchat.db`：单个 **SQLite** 库（设置、会话、消息+归档、人物档案与画像、心情、听过的歌、表情包索引、密钥）；表情包图片本体仍在 `stickers/` |
 | 语音合成 | 独立容器 [Piper](https://github.com/rhasspy/piper)（`tools/tts-server.py` 包一层 HTTP，常驻进程缓存模型，约 490MB）——挂了只影响语音，机器人自动降级成打字 |
-| 联网搜索 | 优先用模型端的 Google Search grounding（`/v1beta/…:generateContent` + `google_search` 工具）；不可用时回退到可插拔搜索源（SearxNG JSON / MediaWiki JSON / 通用 HTML） |
+| 联网搜索 | 优先用模型服务商自带的联网检索（`/v1beta/…:generateContent` + 搜索工具，结果带来源）；不可用时回退到可插拔搜索源（SearxNG JSON / MediaWiki JSON / 通用 HTML） |
 | 健康检查 | 内置极简 HTTP 服务：`/healthz` `/readyz` `/status` |
 
 ## 📚 文档

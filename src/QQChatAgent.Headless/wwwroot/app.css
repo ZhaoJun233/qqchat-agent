@@ -531,28 +531,80 @@ textarea { resize: vertical; line-height: 1.5; }
    用户会觉得“没有保存按钮”。 */
 .page-column { flex-direction: column; }
 
+/*
+ * 设置页分节导航。为什么要它：设置页现在有十来张卡片（模型/QQ/节奏/表情包/音乐/语音/
+ * 搜索/链接/戳一戳/外观/日志），想改一个项得先滑上滑下找到它在哪 —— 加一条常驻的跳转栏，
+ * 一眼能看完全部分节，点一下直接过去；滚动时自动高亮当前所在的那一节。
+ * 胶囊由 app.js 从每张卡片的 h3 文本生成 —— 以后加卡片不用再维护一份硬编码列表。
+ * 它放在 .settings-scroll **外面**（#pageSettings 的直子元素）：滚动内容不会从它下面穿过，
+ * 就不需要一块不透明背板（卡片背景是半透明的，压在下面会脏）。
+ */
+.section-nav {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 16px;
+  overflow-x: auto;          /* 窄屏（手机上 11 个胶囊放不下）横向滑 */
+  scrollbar-width: none;
+  border-bottom: 1px solid var(--divider);
+}
+.section-nav::-webkit-scrollbar { display: none; }
+.section-nav:empty { display: none; }   /* JS 没跑起来（或还没生成）时不占一行空白 */
+
+.section-link {
+  flex: 0 0 auto;
+  padding: 5px 11px;
+  border-radius: 999px;
+  border: 1px solid var(--divider);
+  font-size: 12.5px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  transition: background 90ms ease, color 90ms ease, border-color 90ms ease;
+}
+.section-link:hover { background: var(--subtle-hover); color: var(--text-primary); }
+.section-link:active { background: var(--subtle-press); }
+.section-link.active {
+  color: var(--text-primary);
+  font-weight: 600;
+  border-color: var(--accent);
+  background: var(--subtle-hover);
+}
+
 .settings-scroll { flex: 1 1 auto; overflow-y: auto; min-height: 0; }
 
 /*
  * 设置页能有多宽用多宽：原来钉死在 840px，在宽屏（12 寸以上、全屏浏览器）就变成
- * “左边一条卡片、右边一大块空白”。宽屏下改两列排布，窄屏（手机/平板）仍是单列。
+ * “左边一条卡片、右边一大块空白”。宽屏下改多列排布（auto-fill：窗口多宽就铺多少列，
+ * 不再写死 2 列 / 3 列），窄屏（手机/平板）仍是单列。
  */
-.settings-inner { width: 100%; max-width: 1240px; padding: 24px 32px 32px; display: flex; flex-direction: column; gap: 14px; }
+.settings-inner { width: 100%; max-width: 1240px; padding: 20px 32px 32px; display: flex; flex-direction: column; gap: 14px; }
 
 @media (min-width: 1180px) {
+  /*
+   * 用多列流（像报纸）排卡片，不用 grid —— 卡片高矮差很多（听音乐 940px、外观 158px），
+   * grid 每行按最高的那张算行高，矮卡片下面就空着。1440px 下实测：
+   *   原来（写死两列） 4330px 高、卡片只占 74%
+   *   grid auto-fill   3611px 高、64%
+   *   多列流（现在）   2993px 高、77%（1280px 下 3441px、九成以上）
+   * 同一屏内容更多、要滚的更少，“空白太多”就是公这么治的。
+   */
   .settings-inner {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    align-items: start;
+    display: block;
+    max-width: none;
+    columns: 420px;
+    column-gap: 14px;
   }
 
-  /* 标题 / 说明 / 提示条 / 底部操作栏横跨两列（它们是整页级别的，不该被塞进某一列） */
-  .settings-inner > :not(.card) { grid-column: 1 / -1; }
+  /* 卡片不能被撕到两列去（半张卡片没法看）；间距用 margin 顶（多列流没有 gap） */
+  .settings-inner > * { break-inside: avoid; margin-bottom: 14px; }
 
-  /* 日志卡片占满整行，看得更多 */
-  .settings-inner > .log-card { grid-column: 1 / -1; }
+  /* 标题 / 说明 / 日志卡片横跨所有列（日志框窄了就看不到了） */
+  .settings-inner > .page-title,
+  .settings-inner > .page-desc,
+  .settings-inner > .log-card { column-span: all; }
 
-  /* 卡片内部原本就是两列的小格子；卡片变窄一半后改回单列，否则挤成一指宽 */
+  /* 卡片窄了一半后，内部的“两列小格子”改回单列，否则挤成一指宽 */
   .settings-inner .grid-2 { grid-template-columns: 1fr; }
 }
 
