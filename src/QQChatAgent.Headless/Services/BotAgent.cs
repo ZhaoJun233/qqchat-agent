@@ -969,6 +969,81 @@ public sealed class BotAgent : IDisposable
 
     // ---------- 入站消息 ----------
 
+    /// <summary>
+    /// 这条群消息是不是“只有括号的旁白”（“（笑）”“( 跑 )”“（bushi）”）。
+    ///
+    /// 口径：把括号段、空白、标点与 emoji 全去掉后不剩任何内容，且原本至少有一对括号。
+    /// 所以“今天天气不错（大概）”不会被误伤（括号外面有正文）。
+    ///
+    /// 三种情况**永不**忽略，宁可多回也不装死：
+    ///   • 私聊（一对一说话必须理）；
+    ///   • 带了图（图本身就是内容）；
+    ///   • @ 了机器人（那是直接叫它）。
+    /// </summary>
+    private static bool ShouldIgnoreBracketMessage(QqChatMessage msg)
+    {
+        if (!msg.IsGroup || msg.MentionedSelf || msg.ImageUrls is { Count: > 0 })
+        {
+            return false;
+        }
+
+        var text = msg.Text?.Trim() ?? string.Empty;
+        if (text.Length == 0 || text.IndexOfAny(BracketOpen) < 0)
+        {
+            return false;
+        }
+
+        // 把所有括号段（含嵌套到最外层的写法）剔掉，再看还剩什么
+        var stripped = new System.Text.StringBuilder();
+        var depth = 0;
+        foreach (var ch in text)
+        {
+            if (BracketOpen.Contains(ch))
+            {
+                depth++;
+                continue;
+            }
+
+            if (BracketClose.Contains(ch))
+            {
+                depth = Math.Max(0, depth - 1);
+                continue;
+            }
+
+            if (depth == 0)
+            {
+                stripped.Append(ch);
+            }
+        }
+
+        foreach (var ch in stripped.ToString())
+        {
+            if (char.IsWhiteSpace(ch) || IsDecoration(ch))
+            {
+                continue;
+            }
+
+            return false;   // 括号外面还有正经内容 → 不是旁白
+        }
+
+        return true;
+    }
+
+    private static readonly char[] BracketOpen = ['（', '(', '［', '[', '【', '｛', '{', '〈'];
+    private static readonly char[] BracketClose = ['）', ')', '］', ']', '】', '｝', '}', '〉'];
+
+    /// <summary>标点与 emoji 之类的“装饰”：它们本身不构成内容。</summary>
+    private static bool IsDecoration(char ch)
+    {
+        if (char.IsPunctuation(ch) || char.IsSymbol(ch) || char.IsSurrogate(ch))
+        {
+            return true;
+        }
+
+        // 常见装饰字符：波浪号/间隔号/省略号/空白（含全角空格）
+        return ch is '～' or '~' or '…' or '·' or '　' or '〰' or '﹏';
+    }
+
     private void OnMessageReceived(QqChatMessage msg)
     {
         try
@@ -994,6 +1069,14 @@ public sealed class BotAgent : IDisposable
         // 机器人自己发的消息不入库（协议端可能回显）
         if (_selfId != 0 && msg.UserId == _selfId)
         {
+            return;
+        }
+
+        // 只忽略“纯括号消息”（如“（笑）”“（bushi）”）—— 关掉开关就完全不拦
+        if (_settings.IgnoreBracketMessages && ShouldIgnoreBracketMessage(msg))
+        {
+            // 同一个人一分钟最多记一条：不然旁白刷屏时日志也跟着刷
+            LogThrottled("bracket:" + msg.UserId, $"忽略（纯括号消息）: {msg.SenderName}({msg.UserId}): {Shorten(msg.Text, 30)}");
             return;
         }
 

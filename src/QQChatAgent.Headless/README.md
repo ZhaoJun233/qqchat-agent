@@ -98,6 +98,7 @@ secrets:
 | `QQCHAT_PRIVATE_COOLDOWN` | `3` | 同一私聊的最小回复间隔（秒） |
 | `QQCHAT_IDLE_FALLBACK` | `60` | 静默兜底：超过该秒数没有主动请求时补判断一次；`0` 关闭 |
 | `QQCHAT_SPLIT_REPLIES` | `1` | 长回复按句分句发送（最多 4 段，不丢字；不会在小数 / 域名 / 连续标点 / 收尾引号处切断） |
+| `QQCHAT_IGNORE_BRACKETS` | `0` | `1` = 忽略“只有括号”的群消息（「（笑）」「（bushi）」这类旁白）：不落库、不进上下文、不扯机器人接话。括号外有正文的照常处理；带图 / 带 @ 机器人 / 私聊永不忽略 |
 | `QQCHAT_SEGMENT_DELAY_MS` | `700` | 分句之间的间隔 |
 | `QQCHAT_MAX_CONTEXT` | `200` | 喂给模型的最大上下文条数 |
 | `QQCHAT_PROFILE_LOOKUP` | `8` | 附带的人物档案数量上限 |

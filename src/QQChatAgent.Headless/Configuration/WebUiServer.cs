@@ -540,6 +540,7 @@ public sealed class WebUiServer : IDisposable
             if (body["privateCooldownSeconds"] is JsonNode pc) s.PrivateCooldownSeconds = Math.Max(0, pc.GetValue<int>());
             if (body["idleFallbackSeconds"] is JsonNode fb) s.IdleFallbackSeconds = Math.Max(0, fb.GetValue<int>());
             if (body["splitReplies"] is JsonNode sp) s.SplitReplies = sp.GetValue<bool>();
+            if (body["ignoreBracketMessages"] is JsonNode ibm) s.IgnoreBracketMessages = ibm.GetValue<bool>();
             if (body["segmentDelayMs"] is JsonNode sd) s.SegmentDelayMs = Math.Max(0, sd.GetValue<int>());
             if (body["maxContextMessages"] is JsonNode mc) s.MaxContextMessages = Math.Clamp(mc.GetValue<int>(), 10, 1000);
             if (body["profileLookupCount"] is JsonNode pl) s.ProfileLookupCount = Math.Clamp(pl.GetValue<int>(), 0, 50);
@@ -923,6 +924,7 @@ public sealed class WebUiServer : IDisposable
                 ["privateCooldownSeconds"] = s.PrivateCooldownSeconds,
                 ["idleFallbackSeconds"] = s.IdleFallbackSeconds,
                 ["splitReplies"] = s.SplitReplies,
+                ["ignoreBracketMessages"] = s.IgnoreBracketMessages,
                 ["segmentDelayMs"] = s.SegmentDelayMs,
                 ["maxContextMessages"] = s.MaxContextMessages,
                 ["profileLookupCount"] = s.ProfileLookupCount,

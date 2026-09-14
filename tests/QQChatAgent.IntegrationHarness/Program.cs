@@ -99,6 +99,7 @@ public static partial class Program
         await Scenario("s26", RunSearchScenarioAsync);
         await Scenario("s27", RunMigrationScenarioAsync);
         await Scenario("s28", RunMemberRoleScenarioAsync);
+        await Scenario("s29", RunBracketMessageScenarioAsync);
         }
         catch (Exception ex)
         {

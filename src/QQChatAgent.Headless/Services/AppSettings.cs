@@ -86,6 +86,15 @@ public sealed class AppSettings
     /// <summary>长回复按句末标点分句发送（更像真人打字）。</summary>
     public bool SplitReplies { get; set; } = true;
 
+    /// <summary>
+    /// 忽略“只有括号”的群消息（如“（笑）”“（bushi）”“( 跑 )”）。
+    /// 为什么要这个开关：群里这类旁白很多，它们不针对任何人、也没什么信息，
+    /// 却会占上下文并可能把机器人拉出来接话（“（笑）”接什么？）。
+    /// 判定口径：去掉所有括号段、空白与标点后不剩内容才算 —— “今天天气不错（大概）”不会误伤。
+    /// 只影响群聊；带图、带 @ 机器人、私聊的消息永远不忽略（宁可多回也不装死）。
+    /// </summary>
+    public bool IgnoreBracketMessages { get; set; }
+
     /// <summary>分段发送时每段之间的时间基准（毫秒）。</summary>
     public int SegmentDelayMs { get; set; } = 700;
 

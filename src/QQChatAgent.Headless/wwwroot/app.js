@@ -1006,6 +1006,7 @@
     $("setSummaryChars").value = r.profileSummaryMaxChars;
     $("setSummaryInterval").value = r.profileSummaryIntervalSeconds;
     $("setSplitReplies").checked = r.splitReplies;
+    $("setIgnoreBrackets").checked = r.ignoreBracketMessages === true;
     $("setEnableStickers").checked = r.enableStickers;
     $("setStickerMax").value = r.stickerLibraryMax;
     $("setStickerCandidates").value = r.stickerCandidates;
@@ -1090,6 +1091,7 @@
       privateCooldownSeconds: Number($("setPrivateCooldown").value),
       idleFallbackSeconds: Number($("setIdleFallback").value),
       splitReplies: $("setSplitReplies").checked,
+      ignoreBracketMessages: $("setIgnoreBrackets").checked,
       segmentDelayMs: Number($("setSegmentDelay").value),
       maxContextMessages: Number($("setMaxContext").value),
       maxMessagesPerConversation: Number($("setMaxMessages").value),
