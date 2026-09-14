@@ -970,78 +970,183 @@ public sealed class BotAgent : IDisposable
     // ---------- 入站消息 ----------
 
     /// <summary>
-    /// 这条群消息是不是“只有括号的旁白”（“（笑）”“( 跑 )”“（bushi）”）。
+    /// 把群友消息**开头 / 结尾**的括号旁白剥掉，返回（是否整条忽略、洗净后的文本）。
     ///
-    /// 口径：把括号段、空白、标点与 emoji 全去掉后不剩任何内容，且原本至少有一对括号。
-    /// 所以“今天天气不错（大概）”不会被误伤（括号外面有正文）。
+    /// 口径来自群里真实消息（号主反馈后我拉了 700 多条带括号的群消息看过）：
+    ///   • “（雨哗啦啦）”            整条都是旁白 → 忽略；
+    ///   • “行（端在桌上）”          尾巴上的旁白 → 留“行”；
+    ///   • “（放在地上）来吧，猫猫，”  开头的旁白   → 留“来吧，猫猫，”；
+    ///   • 中间位置的括号**不碰**（“（2026）年的计划”里的括号是正文，群样本里也没这种旁白）。
     ///
-    /// 三种情况**永不**忽略，宁可多回也不装死：
-    ///   • 私聊（一对一说话必须理）；
-    ///   • 带了图（图本身就是内容）；
-    ///   • @ 了机器人（那是直接叫它）。
+    /// 三个例外——机器人自己的内容标记（[图片] / [表情:斜眼笑] / [动画表情:…] / [语音]…）
+    /// 是“对方发了啥”的记录，不是旁白：一律保留（把它们一起剥掉就等于把群友发表情的记录抹了，踩过）。
+    /// 私聊 / 带图 / @ 机器人的消息完全不动（宁可多回也不装死）。
     /// </summary>
-    private static bool ShouldIgnoreBracketMessage(QqChatMessage msg)
+    private static (bool Ignore, string Text) StripBracketAsides(QqChatMessage msg)
     {
-        if (!msg.IsGroup || msg.MentionedSelf || msg.ImageUrls is { Count: > 0 })
-        {
-            return false;
-        }
-
         var text = msg.Text?.Trim() ?? string.Empty;
-        if (text.Length == 0 || text.IndexOfAny(BracketOpen) < 0)
+        if (!msg.IsGroup || msg.MentionedSelf || msg.ImageUrls is { Count: > 0 } || text.Length == 0)
         {
-            return false;
+            return (false, text);
         }
 
-        // 把所有括号段（含嵌套到最外层的写法）剔掉，再看还剩什么
-        var stripped = new System.Text.StringBuilder();
-        var depth = 0;
+        // 反复剥首尾（“（端到你面前）（气味飘在你的鼻腔内）”要剥两次），中间那段留着。
+        var current = text;
+        while (true)
+        {
+            var before = current;
+            current = current.Trim();
+
+            if (TryTakeLeadingBracket(current, out var afterLead))
+            {
+                current = afterLead;
+            }
+
+            if (TryTakeTrailingBracket(current, out var afterTail))
+            {
+                current = afterTail;
+            }
+
+            if (current.Trim() == before.Trim())
+            {
+                break;
+            }
+        }
+
+        current = current.Trim();
+        if (current.Length == 0 || IsOnlyDecoration(current))
+        {
+            return (true, string.Empty);   // 剥完只剩标点/表情（如“（真的）？”→“？”）也算整条旁白
+        }
+
+        return (false, current);
+    }
+
+    /// <summary>只剩标点、符号、emoji 与空白（不构成内容）。</summary>
+    private static bool IsOnlyDecoration(string text)
+    {
         foreach (var ch in text)
         {
-            if (BracketOpen.Contains(ch))
-            {
-                depth++;
-                continue;
-            }
-
-            if (BracketClose.Contains(ch))
-            {
-                depth = Math.Max(0, depth - 1);
-                continue;
-            }
-
-            if (depth == 0)
-            {
-                stripped.Append(ch);
-            }
-        }
-
-        foreach (var ch in stripped.ToString())
-        {
-            if (char.IsWhiteSpace(ch) || IsDecoration(ch))
+            if (char.IsWhiteSpace(ch) || char.IsPunctuation(ch) || char.IsSymbol(ch) || char.IsSurrogate(ch))
             {
                 continue;
             }
 
-            return false;   // 括号外面还有正经内容 → 不是旁白
+            if (ch is '～' or '~' or '…' or '·' or '　' or '〰' or '﹏')
+            {
+                continue;
+            }
+
+            return false;
         }
 
         return true;
     }
 
-    private static readonly char[] BracketOpen = ['（', '(', '［', '[', '【', '｛', '{', '〈'];
-    private static readonly char[] BracketClose = ['）', ')', '］', ']', '】', '｝', '}', '〉'];
+    private static readonly char[] BracketOpen = ['（', '(', '［', '[', '【', '｛', '{', '〈', '《'];
+    private static readonly char[] BracketClose = ['）', ')', '］', ']', '】', '｝', '}', '〉', '》'];
 
-    /// <summary>标点与 emoji 之类的“装饰”：它们本身不构成内容。</summary>
-    private static bool IsDecoration(char ch)
+    /// <summary>开头就是一段括号（且不是我们的内容标记）→ 剥掉它。</summary>
+    private static bool TryTakeLeadingBracket(string text, out string rest)
     {
-        if (char.IsPunctuation(ch) || char.IsSymbol(ch) || char.IsSurrogate(ch))
+        rest = text;
+        if (text.Length < 2 || Array.IndexOf(BracketOpen, text[0]) < 0)
         {
-            return true;
+            return false;
         }
 
-        // 常见装饰字符：波浪号/间隔号/省略号/空白（含全角空格）
-        return ch is '～' or '~' or '…' or '·' or '　' or '〰' or '﹏';
+        var close = FindClose(text, 0);
+        if (close < 0)
+        {
+            return false;   // 括号没闭合，当普通文本
+        }
+
+        var inner = text[1..close];
+        if (IsContentMarker(inner) || LooksNumeric(inner))
+        {
+            return false;
+        }
+
+        rest = text[(close + 1)..];
+        return true;
+    }
+
+    /// <summary>结尾是一段括号（且不是我们的内容标记）→ 剥掉它。</summary>
+    private static bool TryTakeTrailingBracket(string text, out string rest)
+    {
+        rest = text;
+        if (text.Length < 2 || Array.IndexOf(BracketClose, text[^1]) < 0)
+        {
+            return false;
+        }
+
+        // 从右往左找配对的左括号（简单配对：碰到另一个右括号就放弃，不当旁白）
+        var openIndex = -1;
+        for (var i = text.Length - 2; i >= 0; i--)
+        {
+            if (Array.IndexOf(BracketClose, text[i]) >= 0)
+            {
+                return false;
+            }
+
+            if (Array.IndexOf(BracketOpen, text[i]) >= 0)
+            {
+                openIndex = i;
+                break;
+            }
+        }
+
+        if (openIndex < 0)
+        {
+            return false;
+        }
+
+        var inner = text[(openIndex + 1)..^1];
+        if (IsContentMarker(inner) || LooksNumeric(inner))
+        {
+            return false;
+        }
+
+        rest = text[..openIndex];
+        return true;
+    }
+
+    /// <summary>
+    /// 括号里是不是“纯数字/符号”（如「（2026）」「（1.5）」）—— 这类是正文的一部分，不当旁白剥掉。
+    /// 判据：里面一个字母/汉字都没有。（汉字在 .NET 里算 Letter，所以一个判断就够）
+    /// </summary>
+    private static bool LooksNumeric(string inner)
+        => inner.Trim().Length > 0 && !inner.Any(char.IsLetter);
+
+    private static int FindClose(string text, int openIndex)
+    {
+        for (var i = openIndex + 1; i < text.Length; i++)
+        {
+            if (Array.IndexOf(BracketClose, text[i]) >= 0)
+            {
+                return i;
+            }
+        }
+
+        return -1;
+    }
+
+    /// <summary>
+    /// 这段括号里是不是“机器人写的内容标记”（对方发表情/图片/语音的记录）。
+    /// 这些不是旁白，不能当括号剥掉——不然群友发的表情就被抹掉了（踩过）。
+    /// </summary>
+    private static bool IsContentMarker(string inner)
+    {
+        var t = inner.Trim();
+        foreach (var marker in new[] { "图片", "表情", "动画表情", "语音", "视频", "文件", "音乐", "合并转发", "戳一戳", "分享", "卡片", "位置", "链接", "视频通话" })
+        {
+            if (t.StartsWith(marker, StringComparison.Ordinal))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private void OnMessageReceived(QqChatMessage msg)
@@ -1072,12 +1177,22 @@ public sealed class BotAgent : IDisposable
             return;
         }
 
-        // 只忽略“纯括号消息”（如“（笑）”“（bushi）”）—— 关掉开关就完全不拦
-        if (_settings.IgnoreBracketMessages && ShouldIgnoreBracketMessage(msg))
+        // 括号旁白：剥掉开头/结尾的括号段（“行（端在桌上）” → “行”）；剥完什么都不剩 → 整条忽略。
+        if (_settings.IgnoreBracketMessages)
         {
-            // 同一个人一分钟最多记一条：不然旁白刷屏时日志也跟着刷
-            LogThrottled("bracket:" + msg.UserId, $"忽略（纯括号消息）: {msg.SenderName}({msg.UserId}): {Shorten(msg.Text, 30)}");
-            return;
+            var (ignoreBracket, cleanedText) = StripBracketAsides(msg);
+
+            if (ignoreBracket)
+            {
+                // 同一个人一分钟最多记一条：不然旁白刷屏时日志也跟着刷
+                LogThrottled("bracket:" + msg.UserId, $"忽略（纯括号旁白）: {msg.SenderName}({msg.UserId}): {Shorten(msg.Text, 30)}");
+                return;
+            }
+
+            if (cleanedText.Length > 0 && cleanedText != msg.Text)
+            {
+                msg = msg with { Text = cleanedText };   // 旁白不进上下文、也不进档案
+            }
         }
 
         var conversation = GetOrCreateConversation(msg);

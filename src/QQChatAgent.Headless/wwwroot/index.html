@@ -312,8 +312,10 @@
           <label class="switch-row">
             <input type="checkbox" id="setIgnoreBrackets" />
             <span class="switch"></span>
-            <span>忽略“只有括号”的群消息<span class="hint">像「（笑）」「（bushi）」「( 跑 )」这类旁白：不落库、不进上下文、不会扯它接话；
-              「今天天气不错（大概）」这种有正文的照常处理。带图 / 带 @ 机器人 / 私聊永远不会被忽略</span></span>
+            <span>忽略群友消息里的括号旁白<span class="hint">如「（笑）」「（bushi）」；也包含前后带的动作旁白：
+              「行（端在桌上）」→ 只留下「行」，「（放在地上）来吧」→ 只留下「来吧」。
+              整条都是旁白才整条忽略；句子中间的括号（「（2026）年的计划」）不碰；
+              群友发表情/图片的记录（[表情:斜眼笑]、[图片]）不会当成旁白；带图 / 带 @ 机器人 / 私聊永不动</span></span>
           </label>
         </div>
 
