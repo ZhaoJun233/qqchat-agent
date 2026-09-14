@@ -258,11 +258,12 @@ public sealed class AppSettings
     public int MusicListenCooldownSeconds { get; set; } = 120;
 
     /// <summary>
-    /// 专门用来“听”的音频识别模型（留空 = 不听，只用手写 DSP 的客观数据）。
-    /// 为什么要单独配：主模型实测收不到音频（代理会静默丢掉），
-    /// 而 gemini-3.7-flash-high / gemini-3-flash 这类是真的能听到声音的。
+    /// 专门用来“听”的音频识别模型（**留空 = 不听**，只用手写 DSP 的客观数据）。
+    /// 为什么要单独配：很多网关/中转会把音频静默丢掉，主模型根本收不到声音 ——
+    /// 这时配一个确实支持音频输入、而且该网关愿意转发的模型，才能“听”出曲风情绪。
+    /// 默认留空：具体填哪个模型完全取决于你用的网关，不在代码里替用户指定。
     /// </summary>
-    public string MusicUnderstandModel { get; set; } = "gemini-3.7-flash-high";
+    public string MusicUnderstandModel { get; set; } = string.Empty;
 
     /// <summary>是否把音频片段交给上面的音频识别模型（关掉 = 只用 DSP 实测数据）。</summary>
     public bool MusicSendAudioToModel { get; set; } = true;

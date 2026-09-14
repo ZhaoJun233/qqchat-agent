@@ -52,6 +52,9 @@ public static partial class Program
             ["QQCHAT_NETEASE_BASE_URL"] = music.BaseUrl,
             ["QQCHAT_MUSIC_SOURCES"] = music.SourceTemplate(songWithAudio),
             ["QQCHAT_MUSIC_MAX_MB"] = "8",
+            // 音频识别模型：**测试里必须显式给**。生产默认是空的（“留空 = 不听”，
+            // 具体填哪个型号取决于各自网关），这里放一个假模型名，验证“音频真的交给它听了”。
+            ["QQCHAT_MUSIC_MODEL"] = "mock-audio-model",
             ["QQCHAT_MUSIC_ANALYSIS_SECONDS"] = "60"
         });
 
